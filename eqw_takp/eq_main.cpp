@@ -1,0 +1,467 @@
+// eqmain.dll creates the user interface for the login, options, and server select screens.
+//
+// Lifecycle:
+//  - The eqmain.dll is loaded at the start of the WinMain infinite loop to present the login
+//    screen. It then blocks until it completes. FreeLibrary is called on the way out, so
+//    this dll and resouces can be cycled in and out of memory.
+//
+// TODO:
+//  - Resource lifetimes: d3dcreate, surfaces, other pointers
+//  - Possibly should hook loadlibrary for ddraw.dll and install directdrawcreate then
+//  - Check if really need all the surface stuff and pixel format overrides.
+//  - Go through other TODO's and prune out unneeded items.
+
+#include "eq_main.h"
+
+#include <ddraw.h>
+
+#include <iostream>
+#include <string>
+
+#include "dinput_manager.h"
+#include "iat_hook.h"
+#include "vtable_hook.h"
+
+// Using an EqMainInt namespace instead of a purely static class to reduce the qualifier clutter. The
+// anonymous namespace forces it to private internal scope.
+namespace EqMainInt {
+namespace {
+// Shared window state.
+HWND hwnd_ = nullptr;                 // Shared game window.
+WNDPROC original_wndproc_ = nullptr;  // Stores the previous wndproc.
+WNDPROC eqmain_wndproc_ = nullptr;    // Stores eqmain.dll's wndproc.
+
+// DirectDraw related state.
+IDirectDraw* dd_ = nullptr;
+IDirectDrawSurface* primary_surface_ = nullptr;
+IDirectDrawSurface* secondary_surface_ = nullptr;
+
+// The eqmain.dll graphics are designed for 640x480, so just hard-code it.
+static constexpr int kClientWidth = 640;
+static constexpr int kClientHeight = 480;
+RECT client_rect_ = {0, 0, kClientWidth, kClientHeight};  // Updated to screen coords.
+int win_width_ = kClientWidth;                            // Increases later due to border.
+int win_height_ = kClientHeight;                          // Increases later due to border and title bar.
+
+// EqMain.dll hooks installed when the library is loaded.
+IATHook hook_DirectDrawCreate_;
+IATHook hook_CreateWindow_;
+IATHook hook_DestroyWindow_;
+IATHook hook_SetForegroundWindow_;
+IATHook hook_SetWindowPos_;
+IATHook hook_SetCapture_;
+IATHook hook_SetFocus_;
+IATHook hook_ShowCursor_;
+IATHook hook_GetCursorPos_;
+IATHook hook_ClientToScreen_;
+IATHook hook_SetWindowLongA_;
+
+// DirectDraw hook set in DirectDrawCreate hook.
+VTableHook hook_DDrawRelease_;
+VTableHook hook_SetCooperativeLevel_;
+VTableHook hook_SetDisplayMode_;
+VTableHook hook_CreateSurface_;
+VTableHook hook_GetDisplayMode_;
+
+// DirectDrawSurface hooks set in DirectDraw CreateSurface hook.
+VTableHook hook_Flip_;
+VTableHook hook_GetAttachedSurface_;
+
+// Internal methods.
+
+// Explict bitblit copy from the backbuffer secondary surface to the primary client surface.
+HRESULT WINAPI DDrawSurfaceFlipHook(IDirectDrawSurface* surface, IDirectDrawSurface* surface2, DWORD flags) {
+  HRESULT result = dd_->WaitForVerticalBlank(1, hwnd_);
+  if (!(secondary_surface_->IsLost() == DDERR_SURFACELOST) && !(primary_surface_->IsLost() == DDERR_SURFACELOST)) {
+    RECT srcRect = {0, 0, kClientWidth, kClientHeight};
+    RECT destRect = client_rect_;
+    HRESULT result = surface->Blt(&destRect, secondary_surface_, &srcRect, DDBLT_WAIT, nullptr);
+    *surface = *secondary_surface_;
+  }
+  return result;
+}
+
+// Override to provide the pre-allocated secondary surface as the backbuffer.
+HRESULT WINAPI DDrawSurfaceGetAttachedSurfaceHook(IDirectDrawSurface* surface, DDSCAPS* caps,
+                                                  LPDIRECTDRAWSURFACE* backbuffer) {
+  if (surface == primary_surface_) {
+    std::cout << "EqMain: GetAttachedSurface Primary" << std::endl;
+    *backbuffer = secondary_surface_;
+    return DD_OK;
+  }
+  HRESULT result = hook_GetAttachedSurface_.original(DDrawSurfaceGetAttachedSurfaceHook)(surface, caps, backbuffer);
+  if (!SUCCEEDED(result))
+    std::cout << "EqMain: GetAttachedSurface Failed HRESULT: " << std::hex << (DWORD)result << std::dec << std::endl;
+  return result;
+}
+
+// Helper function to install the required surface hooks.
+void InstallDirectDrawSurfaceHooks(IDirectDrawSurface* surface) {
+  void** vtable = *(void***)(surface);
+  hook_Flip_ = VTableHook(vtable, 11, DDrawSurfaceFlipHook);
+  hook_GetAttachedSurface_ = VTableHook(vtable, 12, DDrawSurfaceGetAttachedSurfaceHook);
+}
+
+// Fix the pixel format required by eqmain.dll.
+DDPIXELFORMAT GetPixelFormat(void) {
+  DDPIXELFORMAT format;
+  ZeroMemory(&format, sizeof(DDPIXELFORMAT));
+  format.dwSize = sizeof(DDPIXELFORMAT);
+  format.dwFlags = DDPF_RGB;
+  format.dwRGBBitCount = 16;   // Match primary surface bit depth
+  format.dwRBitMask = 0xF800;  // 5 bits for Red (RGB 5-6-5)
+  format.dwGBitMask = 0x07E0;  // 6 bits for Green (RGB 5-6-5)
+  format.dwBBitMask = 0x001F;  // 5 bits for Blue (RGB 5-6-5)
+  return format;
+}
+
+HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
+                                      LPDIRECTDRAWSURFACE* lplpDDSurface, IUnknown* pUnkOuter);
+
+// Fix up the surface descriptors to play nice with windowed mode.
+HRESULT CreatePrimarySurface(IDirectDraw* lplpDD) {
+  DDSURFACEDESC surface_desc;
+  ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));
+  surface_desc.dwSize = sizeof(DDSURFACEDESC);
+  surface_desc.dwFlags = DDSD_CAPS;
+  surface_desc.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
+  surface_desc.ddpfPixelFormat = GetPixelFormat();
+  HRESULT result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lplpDD, &surface_desc, &primary_surface_,
+                                                                        NULL);  // create the primary surface
+
+  if (!SUCCEEDED(result)) {
+    std::cout << "EqMain: Primary Surface Creation Failed with HRESULT: " << std::hex << (DWORD)result << std::dec
+              << std::endl;
+    return result;
+  }
+
+  return result;
+}
+
+/// Create a backbuffer to ensure GetAttachedSurface() doesn't fail.
+HRESULT CreateSecondarySurface(IDirectDraw* lplpDD) {
+  DDSURFACEDESC surface_desc;
+  ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));
+  surface_desc.dwSize = sizeof(DDSURFACEDESC);
+  surface_desc.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
+  surface_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
+  surface_desc.dwWidth = kClientWidth;
+  surface_desc.dwHeight = kClientHeight;
+  surface_desc.ddpfPixelFormat = GetPixelFormat();
+  HRESULT result =
+      hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lplpDD, &surface_desc, &secondary_surface_, NULL);
+  if (!SUCCEEDED(result))
+    std::cout << "EqMain: Secondary Surface Creation Failed with HRESULT: " << std::hex << (DWORD)result << std::dec
+              << std::endl;
+  return result;
+}
+
+HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
+                                      LPDIRECTDRAWSURFACE* lplpDDSurface, IUnknown* pUnkOuter) {
+  if (lpDDSurfaceDesc == nullptr || lplpDDSurface == nullptr) return E_POINTER;
+
+  HRESULT result = E_FAIL;
+  if ((lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE) && (lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_FLIP) &&
+      (lpDDSurfaceDesc->dwFlags & DDSD_CAPS) && (lpDDSurfaceDesc->dwFlags & DDSD_BACKBUFFERCOUNT) &&
+      lpDDSurfaceDesc->dwBackBufferCount == 1) {
+    if (SUCCEEDED(CreatePrimarySurface(lplpDD)) && SUCCEEDED(CreateSecondarySurface(lplpDD))) {
+      InstallDirectDrawSurfaceHooks(primary_surface_);
+      InstallDirectDrawSurfaceHooks(secondary_surface_);
+      LPDIRECTDRAWCLIPPER lpClipper;
+      lplpDD->CreateClipper(0, &lpClipper, NULL);
+      lpClipper->SetHWnd(0, hwnd_);
+      RECT clipRect = {0, 0, kClientWidth, kClientHeight};
+      primary_surface_->SetClipper(lpClipper);
+      lpClipper->Release();
+      std::cout << "EqMain: Surfaces created!" << std::endl;
+      *lplpDDSurface = primary_surface_;
+      return DD_OK;
+    } else
+      return E_FAIL;
+  }
+
+  DDSURFACEDESC surface_desc;
+  ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));
+  memcpy(&surface_desc, lpDDSurfaceDesc, sizeof(DDSURFACEDESC));
+
+  if (!(surface_desc.ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE)) {
+    if (!(surface_desc.dwFlags & DDSD_PIXELFORMAT)) {
+      surface_desc.dwFlags |= DDSD_PIXELFORMAT;
+      surface_desc.ddpfPixelFormat = GetPixelFormat();
+    }
+    surface_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
+  }
+
+  result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lplpDD, &surface_desc, lplpDDSurface, pUnkOuter);
+  if (!SUCCEEDED(result))
+    std::cout << "EqMain: Surface Creation Failed with HRESULT: " << std::hex << (DWORD)result << std::dec << std::endl;
+
+  return result;
+}
+
+// Override the results with the pixel format of our re-used eqw window.
+HRESULT WINAPI DDrawGetDisplayModeHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc) {
+  std::cout << "EqMain: Get display mode" << std::endl;
+  HRESULT result = hook_GetDisplayMode_.original(DDrawGetDisplayModeHook)(lplpDD, lpDDSurfaceDesc);
+  lpDDSurfaceDesc->ddpfPixelFormat = GetPixelFormat();
+  return result;
+}
+
+// TODO: This is a temporary sanity check for resources.
+ULONG WINAPI DDrawReleaseHook(IDirectDraw* lplpDD) {
+  std::cout << "EqMain: DDrawRelease 0x" << std::hex << (DWORD)lplpDD << std::dec << std::endl;
+  return hook_DDrawRelease_.original(DDrawReleaseHook)(lplpDD);
+}
+
+// Block any changes to our fixed 640x480 and Bpp.
+HRESULT WINAPI DDrawSetDisplayModeHook(IDirectDraw* lplpDD, DWORD dwWidth, DWORD dwHeight, DWORD dwBpp) {
+  std::cout << "EqMain: Blocked SetDisplayMode " << dwWidth << " x " << dwHeight << " " << dwBpp << std::endl;
+  return DD_OK;
+}
+
+// Hook the cooperative level to always be in non-exclusive normal windowed mode.
+HRESULT WINAPI DDrawSetCooperativeLevelHook(IDirectDraw* lplpDD, HWND hWnd, DWORD dwFlags) {
+  std::cout << "EqMain: DDraw overriding SetCooperativeLevel" << std::endl;
+  HRESULT res = hook_SetCooperativeLevel_.original(DDrawSetCooperativeLevelHook)(lplpDD, hWnd, DDSCL_NORMAL);
+  if (res != DD_OK) std::cout << "EqMain: Error setting cooperative level" << std::endl;
+  return res;
+}
+
+HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
+                                      LPDIRECTDRAWSURFACE FAR* lplpDDSurface, IUnknown FAR* pUnkOuter);
+
+// Hooks the create so it can install the required vtable hooks.
+HRESULT WINAPI DDrawDirectDrawCreateHook(GUID FAR* lpGUID, LPDIRECTDRAW* lplpDD, IUnknown FAR* pUnkOuter) {
+  std::cout << "EqMain: DirectDraw Create 0x" << std::hex << lpGUID << " 0x" << lplpDD << " 0x" << pUnkOuter << std::dec
+            << std::endl;
+  HRESULT rval = hook_DirectDrawCreate_.original(DDrawDirectDrawCreateHook)(lpGUID, lplpDD, pUnkOuter);
+  dd_ = *lplpDD;
+
+  if (lplpDD) {
+    void** vtable = *(void***)dd_;
+    hook_DDrawRelease_ = VTableHook(vtable, 2, DDrawReleaseHook);
+    hook_CreateSurface_ = VTableHook(vtable, 6, DDrawCreateSurfaceHook);
+    hook_GetDisplayMode_ = VTableHook(vtable, 12, DDrawGetDisplayModeHook);
+    hook_SetDisplayMode_ = VTableHook(vtable, 21, DDrawSetDisplayModeHook);
+    hook_SetCooperativeLevel_ = VTableHook(vtable, 20, DDrawSetCooperativeLevelHook);
+  }
+  return rval;
+}
+
+// Helper function to synchronize the cached client_rect with the actual window client rect.
+void UpdateClientRegion(HWND hwnd) {
+  POINT offset = {0, 0};
+  ::ClientToScreen(hwnd, &offset);
+  ::GetClientRect(hwnd, &client_rect_);
+  client_rect_ = {offset.x + client_rect_.left, offset.y + client_rect_.top, offset.x + client_rect_.right,
+                  offset.y + client_rect_.bottom};
+
+  // TODO: Temporary sanity checking.
+  int width = client_rect_.right - client_rect_.left;
+  int height = client_rect_.bottom - client_rect_.top;
+  if (width != kClientWidth || height != kClientHeight)
+    std::cout << "EqMain: Incorrect client width " << width << " x " << height << std::endl;
+}
+
+// This specialized WndProc is installed to intercept messages to our shared window while EqMain's
+// window is active to handle login. It handles the normal window methods and only uses the default
+// EqMain's wndproc for mouse interaction with the UI buttons.
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+  // if (msg != WM_MOUSEMOVE && msg != 0x404 && msg != WM_TIMER)
+  //  std::cout << "EqMain: WndProc: 0x" << std::hex << msg << std::dec << std::endl;
+
+  switch (msg) {
+    case WM_QUIT:
+      return 0;  // Ignore for this shared window.
+
+    case WM_DESTROY:
+    case WM_CLOSE:
+      std::cout << "EqMain: Terminating process" << std::endl;
+      ::TerminateProcess(::GetCurrentProcess(), 0);
+      break;
+
+    case WM_ACTIVATEAPP:
+      std::cout << "WM_ACTIVATE: " << LOWORD(wParam) << std::endl;
+      if (LOWORD(wParam) == WA_INACTIVE)
+        DInputManager::Unacquire();
+      else
+        DInputManager::Acquire(true);  // Keyboard only.
+      break;
+
+    case WM_GETMINMAXINFO: {
+      MINMAXINFO* info = reinterpret_cast<MINMAXINFO*>(lParam);
+      info->ptMinTrackSize = {win_width_, win_height_};  // Prevent it collapsing when moved/minimized in relogin.
+      return 0;
+    }
+
+    case WM_WINDOWPOSCHANGED:
+      UpdateClientRegion(hwnd);
+      return 0;
+
+    case WM_SETCURSOR:
+      SetCursor(::LoadCursor(NULL, IDC_ARROW));
+      return TRUE;
+
+    case WM_SYSCOMMAND:
+      if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Suppress alt activated menu keys.
+      break;
+
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+      if (eqmain_wndproc_) return ::CallWindowProcA(eqmain_wndproc_, hwnd, msg, wParam, lParam);
+      break;
+    default:
+      break;
+  }
+
+  return ::DefWindowProcA(hwnd, msg, wParam, lParam);
+}
+
+// Reconfigures the shared window to fit the expected eqmain's window size and plugs in the customized
+// WndProc handler for eqmain.
+HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName, DWORD dwStyle, int X,
+                                      int Y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance,
+                                      LPVOID lpParam) {
+  std::cout << "EqMain: Create Window " << X << " " << Y << " " << nWidth << " " << nHeight << std::endl;
+  // The dll sets dwExStyle to 0x40008 (WS_EX_APPWINDOW | WS_EX_TOPMOST) and
+  // dwStyle to 0x80000000 (WS_POPUP).
+
+  original_wndproc_ = reinterpret_cast<WNDPROC>(::GetWindowLongA(hwnd_, GWL_WNDPROC));
+  ::SetWindowLongA(hwnd_, GWL_WNDPROC, reinterpret_cast<LONG>(WndProc));
+
+  // Get the current window styles
+  dwStyle = (DWORD)GetWindowLong(hwnd_, GWL_STYLE);
+  dwExStyle = (DWORD)GetWindowLong(hwnd_, GWL_EXSTYLE);
+
+  // Define a RECT with the desired client size
+  // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
+  RECT win_rect = {0, 0, nWidth, nHeight};
+  AdjustWindowRectEx(&win_rect, dwStyle, FALSE, dwExStyle);
+
+  // Calculate the width and height including non-client areas
+  win_width_ = win_rect.right - win_rect.left;
+  win_height_ = win_rect.bottom - win_rect.top;
+
+  std::cout << "EqMain: Wnd: 0x" << std::hex << hwnd_ << std::dec << ", (";
+  std::cout << win_width_ << " x " << win_height_ << ")" << std::endl;
+
+  X = (GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
+  Y = (GetSystemMetrics(SM_CYSCREEN) - win_height_) / 2;
+
+  SetWindowPos(hwnd_, 0, X, Y, win_width_, win_height_, 0);
+  UpdateClientRegion(hwnd_);
+
+  DInputManager::SetBackgroundMode(true);  // eqmain.dll will crash if keyboard acquire fails.
+
+  return hwnd_;
+}
+
+// EqMain is re-using our Eqw window, so don't let it be destroyed but reset the wndproc handlers.
+BOOL WINAPI User32DestroyWindowHook(HWND hwnd) {
+  std::cout << "EqMain: Destroy - Disconnecting eqmain wndproc" << std::endl;
+
+  // Disable special window handling.
+  eqmain_wndproc_ = nullptr;
+  ::SetWindowLongA(hwnd_, GWL_WNDPROC, (LONG)original_wndproc_);
+
+  DInputManager::SetBackgroundMode(false);  // Let eqgame.exe run in foreground only mode.
+
+  return true;
+}
+
+// The dll is aggressively setting foreground window which is annoying when windowed, so disable that.
+BOOL WINAPI User32SetForegroundWindowHook(HWND hWnd) {
+  ::ShowWindow(hWnd, SW_SHOW);
+  return true;
+}
+
+// TODO: This is primarily for logging and can probably be pruned out in the future.
+HRESULT WINAPI User32SetWindowPosHook(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) {
+  std::cout << "EqMain: SetWindowPos " << X << " " << Y << " " << cx << " " << cy << std::hex << " 0x"
+            << (long)hWndInsertAfter << " 0x" << uFlags << std::dec << " " << std::endl;
+  return hook_SetWindowPos_.original(User32SetWindowPosHook)(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
+}
+
+// Block EqMain from capturing the mouse.
+HWND WINAPI User32SetCaptureHook(HWND hWnd) {
+  std::cout << "EqMain: Blocking SetCapture" << std::endl;
+  return 0;
+}
+
+// Disable the set focus call. Not clear if this is necessary.
+HWND WINAPI User32SetFocusHook(HWND hWnd) {
+  return hWnd;  // No-op that lies that it did something.
+}
+
+// Disable the show cursor call to make the win32 cursor always visible (including title bar).
+int WINAPI User32ShowCursorHook(BOOL show) {
+  int count = ::ShowCursor(true);
+  int target = 0;                                      // Make it precisely visible.
+  while (count < target) count = ::ShowCursor(true);   // Count up to target.
+  while (count > target) count = ::ShowCursor(false);  // Count down to target.
+  return show ? 0 : -1;                                // Effectively a no-op that leaves it visible and lies about it.
+}
+
+// Return a fixed off screen cursor position so the self-drawn cursor is invisible (use win32).
+BOOL WINAPI User32GetCursorPosHook(LPPOINT pt) {
+  if (!pt) return false;
+  pt->x = kClientWidth;
+  pt->y = kClientHeight;
+
+  // Alternatively, to make the rendered game cursor visible (but will need to hide the win32 cursor):
+  // hook_GetCursorPos_.original(User32GetCursorPosHook)(pt);
+  //::ScreenToClient(hwnd_, pt);  // Remove window offset.
+  return true;
+}
+
+// Override so EqMain thinks it is running at (0,0) offset.
+BOOL WINAPI User32ClientToScreenHook(HWND wnd, LPPOINT pt) {
+  return true;  // Return unmodified coordinates.
+}
+
+// Ignore calls to set style but register the active WndProc with eqw's WndProc.
+LONG WINAPI User32SetWindowLongAHook(HWND wnd, int index, long dwNewLong) {
+  std::cout << "EqMain: SetWindowLong: " << index << " 0x" << std::hex << dwNewLong << std::dec << std::endl;
+  if (index == GWL_WNDPROC) {
+    eqmain_wndproc_ = reinterpret_cast<WNDPROC>(dwNewLong);
+    ::SetWindowLongA(hwnd_, GWL_WNDPROC, reinterpret_cast<LONG>(WndProc));
+  }
+
+  return ::GetWindowLongA(wnd, index);
+}
+
+// Initializes state and installs the hooks to bootstrap the rest.
+// Note that unlike eqgame, this will get called multiple times if dropping back to login screen.
+void InitializeEqMain(HMODULE handle, HWND hwnd) {
+  hwnd_ = hwnd;
+  eqmain_wndproc_ = nullptr;
+  DInputManager::Initialize(handle);
+
+  // TODO: Does this state need cleanup and reset here as well?
+  // dd_ = nullptr;
+  // primary_surface_ = nullptr;
+  // secondary_surface_ = nullptr;
+
+  hook_DirectDrawCreate_ = IATHook(handle, "ddraw.dll", "DirectDrawCreate", DDrawDirectDrawCreateHook);
+  hook_CreateWindow_ = IATHook(handle, "user32.dll", "CreateWindowExA", User32CreateWindowExAHook);
+  hook_DestroyWindow_ = IATHook(handle, "user32.dll", "DestroyWindow", User32DestroyWindowHook);
+  hook_SetForegroundWindow_ = IATHook(handle, "user32.dll", "SetForegroundWindow", User32SetForegroundWindowHook);
+  hook_SetWindowPos_ = IATHook(handle, "user32.dll", "SetWindowPos", User32SetWindowPosHook);
+  hook_SetCapture_ = IATHook(handle, "user32.dll", "SetCapture", User32SetCaptureHook);
+  hook_SetWindowLongA_ = IATHook(handle, "user32.dll", "SetWindowLongA", User32SetWindowLongAHook);
+  hook_SetFocus_ = IATHook(handle, "user32.dll", "SetFocus", User32SetFocusHook);
+  hook_ShowCursor_ = IATHook(handle, "user32.dll", "ShowCursor", User32ShowCursorHook);
+  hook_GetCursorPos_ = IATHook(handle, "user32.dll", "GetCursorPos", User32GetCursorPosHook);
+  hook_ClientToScreen_ = IATHook(handle, "user32.dll", "ClientToScreen", User32ClientToScreenHook);
+}
+
+}  // namespace
+}  // namespace EqMainInt
+
+void EqMain::Initialize(HMODULE handle, HWND hwnd) {
+  std::cout << "EqMain: Initialize" << std::endl;
+  EqMainInt::InitializeEqMain(handle, hwnd);
+}

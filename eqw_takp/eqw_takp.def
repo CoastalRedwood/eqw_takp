@@ -1,0 +1,4 @@
+LIBRARY  eqw
+EXPORTS
+  InitializeEqwDll @1 NONAME
+  GetGameWindow
