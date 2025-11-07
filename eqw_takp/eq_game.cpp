@@ -1,6 +1,7 @@
 #include "eq_game.h"
 
 #include <ddraw.h>
+#include <shellapi.h>  // For ExtractIconExA
 #include <windows.h>
 
 #include <filesystem>
@@ -45,15 +46,18 @@
 // anonymous namespace forces it to private internal scope.
 namespace EqGameInt {
 namespace {
-
+static constexpr int kStartupWidth = 640;  // Default eqmain size.
+static constexpr int kStartupHeight = 480;
 static constexpr DWORD kWindowStyleNormal = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME;
 static constexpr DWORD kWindowStyleFullScreen = WS_POPUPWINDOW | WS_VISIBLE;  // TODO: | WS_MAXIMIZE?
 
 // State and resources updated at initialization.
-std::ofstream debug_log_file_;      // Status updates are streamed here.
-std::filesystem::path exe_folder_;  // Folder that contains the game.exe.
-std::filesystem::path ini_path_;    // Full path filename for eqw.ini file.
-HWND hwnd_;                         // Primary shared visible window handle.
+std::ofstream debug_log_file_;    // Status updates are streamed here.
+std::filesystem::path exe_path_;  // Full path filename for eqgame.exe file.
+std::filesystem::path ini_path_;  // Full path filename for eqw.ini file.
+HWND hwnd_ = nullptr;             // Primary shared visible window handle.
+HICON hicon_large_ = nullptr;     // Icons retrieved from the executable.
+HICON hicon_small_ = nullptr;     // Icons retrieved from the executable.
 
 // Hooks to enable hooking the other libraries and supporting windowed mode.
 IATHook hook_LoadLibrary_;
@@ -87,8 +91,19 @@ void UpdateClientRegion() {
 // Creates the common, shared window used by eqgame and eqmain.
 void CreateEqWindow() {
   std::cout << "CreateEqWindow()" << std::endl;
+
+  // Extract the first large and small icon
+  HICON large_icons[1];
+  HICON small_icons[1];
+  UINT extracted_count = ::ExtractIconExA(exe_path_.string().c_str(), 0, large_icons, small_icons, 1);
+  if (extracted_count) {
+    hicon_large_ = large_icons[0];
+    hicon_small_ = small_icons[0];
+  }
+
   WNDCLASSA wc = {};
   wc.lpfnWndProc = GameWndProc;  // Custom handler to intercept messages.
+  wc.hIcon = hicon_small_;
   wc.hInstance = GetModuleHandleA(NULL);
   wc.hCursor = ::LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
   wc.lpszClassName = "_EqWwndclass";
@@ -135,37 +150,39 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
   return hwnd_;
 }
 
-void SetClientSize(int clientWidth, int clientHeight) {
-  std::stringstream ss;
-  ss << clientWidth << "by" << clientHeight;
-  int x = Ini::GetValue<int>("Positions", ss.str() + "X", ini_path_.string().c_str());
-  int y = Ini::GetValue<int>("Positions", ss.str() + "Y", ini_path_.string().c_str());
-  std::cout << "Set window position: " << x << " " << y << " from ini entry for: " << ss.str() << std::endl;
-  SetWindowPos(hwnd_, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-  // Get the current window styles
+void SetClientSize(int client_width, int client_height, bool center = false) {
+  // Constrain the minimum sizes.
+  if (client_width < kStartupHeight || client_height < kStartupWidth) {
+    std::cout << "Preventing small client size: " << client_width << " x " << client_height << std::endl;
+    client_width = max(client_width, kStartupWidth);
+    client_height = max(client_height, kStartupHeight);
+    center = true;
+  }
+  // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
   DWORD dwStyle = (DWORD)GetWindowLong(hwnd_, GWL_STYLE);
   DWORD dwExStyle = (DWORD)GetWindowLong(hwnd_, GWL_EXSTYLE);
-
-  // Define a RECT with the desired client size
-  RECT desiredRect = {0, 0, clientWidth, clientHeight};
-
-  // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
+  RECT desiredRect = {0, 0, client_width, client_height};
   AdjustWindowRectEx(&desiredRect, dwStyle, FALSE, dwExStyle);
 
   // Calculate the width and height including non-client areas
-  int windowWidth = desiredRect.right - desiredRect.left;
-  int windowHeight = desiredRect.bottom - desiredRect.top;
+  int width = desiredRect.right - desiredRect.left;
+  int height = desiredRect.bottom - desiredRect.top;
 
-  // Get the current window position
-  RECT currentRect;
-  GetWindowRect(hwnd_, &currentRect);
-
-  // Keep the window's current position
-  int xPos = currentRect.left;
-  int yPos = currentRect.top;
+  int x = 0;
+  int y = 0;
+  if (center) {
+    x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
+    y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
+  } else {
+    std::stringstream ss;
+    ss << client_width << "by" << client_height;
+    x = Ini::GetValue<int>("Positions", ss.str() + "X", ini_path_.string().c_str());
+    y = Ini::GetValue<int>("Positions", ss.str() + "Y", ini_path_.string().c_str());
+  }
+  std::cout << "EqGame: Set window position: " << x << " " << y << " " << width << " x " << height << std::endl;
 
   // Set the window size and position
-  SetWindowPos(hwnd_, NULL, xPos, yPos, windowWidth, windowHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+  ::SetWindowPos(hwnd_, NULL, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
   UpdateClientRegion();
 }
 
@@ -224,6 +241,18 @@ void InstallHooks(HMODULE handle) {
   DInputManager::Initialize(handle);
 }
 
+void PaintIcon(HWND hwnd) {
+  if (!hicon_large_) return;
+
+  PAINTSTRUCT ps;
+  HDC hdc = BeginPaint(hwnd, &ps);
+  int size = 128;
+  int left = (kStartupWidth - size) / 2;
+  int top = (kStartupHeight - size) / 2;
+  DrawIconEx(hdc, left, top, hicon_large_, size, size, 0, 0, DI_NORMAL);
+  EndPaint(hwnd, &ps);
+}
+
 // Window processing loop for the primary window. Note that it is replaced by eqmain when
 // that is active. Both wndprocs execute on the main (startup) thread. The eqgame spins off
 // a separate thread for the primary game processing loop, so this WndProc must be sensitive
@@ -254,10 +283,21 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_SYSCOMMAND:
       if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Suppress alt activated menu keys.
+      if ((wParam & 0xfff0) == SC_MAXIMIZE) {
+        if (*(void**)0x00809478 == nullptr) SetClientSize(kStartupWidth, kStartupHeight, true);
+        return 0;
+      }
+      break;
+
+    case WM_PAINT:
+      if (*(void**)0x00809478 != nullptr) {  // Check if the primary game object is allocated.
+        ValidateRect(hwnd, nullptr);         // Removes entire client area from the update region.
+      } else {
+        PaintIcon(hwnd);
+      }
       break;
 
     // These messages have eqgame wndproc handling (that we are ignoring).
-    case WM_PAINT:
     case WM_GETTEXT:
     case WM_NCCALCSIZE:
       // execute_eqgame_wndproc = true;
@@ -291,10 +331,9 @@ void InitializeDebugLog() {
 void InitializeIniFilename() {
   char buffer[FILENAME_MAX + 1];
   ::GetModuleFileNameA(NULL, buffer, FILENAME_MAX + 1);
-  std::filesystem::path exe_path(buffer);
-  std::cout << "Exe path: " << exe_path.string() << std::endl;
-  exe_folder_ = exe_path.parent_path();
-  ini_path_ = exe_folder_ / "eqw.ini";
+  exe_path_ = std::filesystem::path(buffer);
+  std::cout << "Exe path: " << exe_path_.string() << std::endl;
+  ini_path_ = exe_path_.parent_path() / "eqw.ini";
   std::cout << "ini path: " << ini_path_.string() << std::endl;
 }
 }  // namespace
