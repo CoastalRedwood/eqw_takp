@@ -3,13 +3,13 @@
 // Lifecycle:
 //  - The eqmain.dll is loaded at the start of the WinMain infinite loop to present the login
 //    screen. It then blocks until it completes. FreeLibrary is called on the way out, so
-//    this dll and resouces can be cycled in and out of memory.
+//    this dll and resources can be cycled in and out of memory.
+//  - With dgvoodoo's d3d8.dll active, the memory location of the ddraw.dll module was changing
+//    between login character select and back, so that library also may be getting reloaded.
 //
 // TODO:
-//  - Resource lifetimes: d3dcreate, surfaces, other pointers
-//  - Possibly should hook loadlibrary for ddraw.dll and install directdrawcreate then
-//  - Check if really need all the surface stuff and pixel format overrides.
-//  - Go through other TODO's and prune out unneeded items.
+//  - On the second cycle back to login, the title bar is not rounded / sticks out.
+//  - Do a cleanup pass of some of the TODO's to prune out unnecessary code.
 
 #include "eq_main.h"
 
@@ -71,7 +71,7 @@ VTableHook hook_GetAttachedSurface_;
 
 // Explict bitblit copy from the backbuffer secondary surface to the primary client surface.
 HRESULT WINAPI DDrawSurfaceFlipHook(IDirectDrawSurface* surface, IDirectDrawSurface* surface2, DWORD flags) {
-  HRESULT result = dd_->WaitForVerticalBlank(1, hwnd_);
+  HRESULT result = dd_ ? dd_->WaitForVerticalBlank(1, hwnd_) : DD_OK;
   if (!(secondary_surface_->IsLost() == DDERR_SURFACELOST) && !(primary_surface_->IsLost() == DDERR_SURFACELOST)) {
     RECT srcRect = {0, 0, kClientWidth, kClientHeight};
     RECT destRect = client_rect_;
@@ -161,6 +161,8 @@ HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDS
   if (lpDDSurfaceDesc == nullptr || lplpDDSurface == nullptr) return E_POINTER;
 
   HRESULT result = E_FAIL;
+
+  // The primary surface gets patched up for windowed mode including an extra backbuffer secondary surface.
   if ((lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE) && (lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_FLIP) &&
       (lpDDSurfaceDesc->dwFlags & DDSD_CAPS) && (lpDDSurfaceDesc->dwFlags & DDSD_BACKBUFFERCOUNT) &&
       lpDDSurfaceDesc->dwBackBufferCount == 1) {
@@ -180,6 +182,7 @@ HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDS
       return E_FAIL;
   }
 
+  // Other surfaces just get some light description patching for windowed mode.
   DDSURFACEDESC surface_desc;
   ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));
   memcpy(&surface_desc, lpDDSurfaceDesc, sizeof(DDSURFACEDESC));
@@ -207,9 +210,18 @@ HRESULT WINAPI DDrawGetDisplayModeHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDD
   return result;
 }
 
-// TODO: This is a temporary sanity check for resources.
+// Clean up any extra custom resources.
 ULONG WINAPI DDrawReleaseHook(IDirectDraw* lplpDD) {
   std::cout << "EqMain: DDrawRelease 0x" << std::hex << (DWORD)lplpDD << std::dec << std::endl;
+
+  dd_ = nullptr;               // Released below.
+  primary_surface_ = nullptr;  // Released by eqmain/ddraw.
+
+  // Clean up the extra secondary surface we manually created. As an experiment,
+  // tried releasing the primary surface and that crashed.
+  if (secondary_surface_) secondary_surface_->Release();
+  secondary_surface_ = nullptr;
+
   return hook_DDrawRelease_.original(DDrawReleaseHook)(lplpDD);
 }
 
@@ -378,7 +390,7 @@ BOOL WINAPI User32SetForegroundWindowHook(HWND hWnd) {
   return true;
 }
 
-// TODO: This is primarily for logging and can probably be pruned out in the future.
+// TODO: This is primarily for logging and can be pruned out in the future.
 HRESULT WINAPI User32SetWindowPosHook(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) {
   std::cout << "EqMain: SetWindowPos " << X << " " << Y << " " << cx << " " << cy << std::hex << " 0x"
             << (long)hWndInsertAfter << " 0x" << uFlags << std::dec << " " << std::endl;
@@ -440,10 +452,10 @@ void InitializeEqMain(HMODULE handle, HWND hwnd) {
   eqmain_wndproc_ = nullptr;
   DInputManager::Initialize(handle);
 
-  // TODO: Does this state need cleanup and reset here as well?
-  // dd_ = nullptr;
-  // primary_surface_ = nullptr;
-  // secondary_surface_ = nullptr;
+  // This state should have been cleaned up by the previous release but just in case clean them.
+  dd_ = nullptr;
+  primary_surface_ = nullptr;
+  secondary_surface_ = nullptr;
 
   hook_DirectDrawCreate_ = IATHook(handle, "ddraw.dll", "DirectDrawCreate", DDrawDirectDrawCreateHook);
   hook_CreateWindow_ = IATHook(handle, "user32.dll", "CreateWindowExA", User32CreateWindowExAHook);
