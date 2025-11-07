@@ -8,6 +8,13 @@ extern "C" __declspec(dllexport) void __stdcall InitializeEqwDll() {
   EqGame::Initialize();  // Installs hooks that install the windowing wrappers.
 }
 
+static constexpr char kVersionStr[] = "0.0.1";
+
+// Provide a method for users to check version compatibility.
+extern "C" __declspec(dllexport) const char* __stdcall GetVersionStr() {
+  return kVersionStr;  // Parseable static const string.
+}
+
 // Provide a clean method to acquire a window handle.
 extern "C" __declspec(dllexport) HWND __stdcall GetGameWindow() {
   return EqGame::GetGameWindow();  // Primary game window.

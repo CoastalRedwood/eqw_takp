@@ -1,4 +1,5 @@
 LIBRARY  eqw
 EXPORTS
   InitializeEqwDll @1 NONAME
+  GetVersionStr
   GetGameWindow
