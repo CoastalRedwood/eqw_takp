@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "cpu_timestamp_fix.h"
 #include "dinput_manager.h"
 #include "eq_gfx.h"
 #include "eq_main.h"
@@ -17,23 +18,22 @@
 #include "vtable_hook.h"
 
 // TODO: Stability and compatibility
-// - The game screen was entirely black when testing on a dell laptop with integrated GPU
-// - When using dgvoodoo's d3d8.dll, it crashes when going login -> char select -> Login w/out entering world
-//   - This also happens when using the old eqw
+// - d3d8to9: No issues.
+// - intel gpu w/out d3d8.dll: black screen (but game is running in background with sounds and ui)
+// - dgvoodoo:
+//   - Crashes char select -> login w/out ever entering world (dx 6.0 error dialog, same as old eqw)
 //   - It is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)
-//   - It does not crash when using the d3d8.dll from d3d8to9
+//   - Without dgvoodoo ddraw.dll it hangs with a black screen trying to go back into eqmain
+//
 // - Review threading: EqGame is spinning off a separate processing thread for the primary
 //   game loops so think through threading and synchronization of video res changes
 //
 // TODO: Features / polishing
-// - Review the keyboard reset mem wipe
-// - Add additional dll exports along the lines of GetGameWindow()
+//// - Add additional dll exports along the lines of GetGameWindow()
 //   - maybe swapmouse, fullscreen, resolution?
 // - Transition glitches:
-//   - Occasional full screen window style is slipping through on second trip from login to char
-//   - Saw a full screen glitch on a camp desktop transition
 //   - Some title bars are squared vs rounded temporarily
-// - Prune down eqmain's todo's
+//   - Some dirty screens are briefly flashed to/from char select
 // - Improve INI settings (location, storing, sanity check values, other options)
 // - Video modes: changing in ini, changing in-game, full screen mode
 // - Support mouse button swap
@@ -194,6 +194,7 @@ HMODULE WINAPI Kernel32LoadLibraryAHook(LPCSTR lpLibFileName) {
     }
     if (!_stricmp(lpLibFileName, "eqgfx_dx8.dll")) {
       EqGfx::Initialize(hmod, [](int width, int height) { SetClientSize(width, height); });
+      CpuTimestampFix::Initialize(ini_path_);
     }
   }
   return hmod;
@@ -284,14 +285,14 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_SYSCOMMAND:
       if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Suppress alt activated menu keys.
       if ((wParam & 0xfff0) == SC_MAXIMIZE) {
-        if (*(void**)0x00809478 == nullptr) SetClientSize(kStartupWidth, kStartupHeight, true);
+        if (*(void **)0x00809478 == nullptr) SetClientSize(kStartupWidth, kStartupHeight, true);
         return 0;
       }
       break;
 
     case WM_PAINT:
-      if (*(void**)0x00809478 != nullptr) {  // Check if the primary game object is allocated.
-        ValidateRect(hwnd, nullptr);         // Removes entire client area from the update region.
+      if (*(void **)0x00809478 != nullptr) {  // Check if the primary game object is allocated.
+        ValidateRect(hwnd, nullptr);          // Removes entire client area from the update region.
       } else {
         PaintIcon(hwnd);
       }
@@ -343,7 +344,6 @@ void EqGame::Initialize() {
   EqGameInt::InitializeDebugLog();
   EqGameInt::InitializeIniFilename();
   EqGameInt::InstallHooks(GetModuleHandleA(NULL));
-  // CreateEqWindow();
 }
 
 HWND EqGame::GetGameWindow() {

@@ -56,6 +56,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="cpu_timestamp_fix.cpp" />
     <ClCompile Include="dinput_manager.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="eq_game.cpp" />
@@ -67,6 +68,7 @@
     <ClCompile Include="vtable_hook.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="cpu_timestamp_fix.h" />
     <ClInclude Include="dinput_manager.h" />
     <ClInclude Include="eq_game.h" />
     <ClInclude Include="eq_gfx.h" />
