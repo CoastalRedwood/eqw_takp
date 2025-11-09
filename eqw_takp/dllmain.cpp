@@ -4,20 +4,43 @@
 #include "eq_game.h"
 
 // The .def file aliases this call to ordinal 1.
-extern "C" __declspec(dllexport) void __stdcall InitializeEqwDll() {
+extern "C" void __stdcall InitializeEqwDll() {
   EqGame::Initialize();  // Installs hooks that install the windowing wrappers.
 }
 
 static constexpr char kVersionStr[] = "0.0.1";
 
 // Provide a method for users to check version compatibility.
-extern "C" __declspec(dllexport) const char* __stdcall GetVersionStr() {
+extern "C" const char* __stdcall GetVersionStr() {
   return kVersionStr;  // Parseable static const string.
 }
 
-// Provide a clean method to acquire a window handle.
-extern "C" __declspec(dllexport) HWND __stdcall GetGameWindow() {
+// Provide a clean method to acquire a window handle. Note that this also
+// gets returned in the primary createwindow and stored in the game
+// global variable as well.
+extern "C" HWND __stdcall GetGameWindow() {
   return EqGame::GetGameWindow();  // Primary game window.
+}
+
+// Returns the current state of the internal flag. Note that the SetEnableFullScreen()
+// triggers a window message that may cross threads so this may not update immediately.
+extern "C" int __stdcall GetEnableFullScreen() {
+  return EqGame::GetEnableFullScreen();  // 0 = Windowed mode, 1 = Full screen mode.
+}
+
+// Posts a windows message request to set the full screen mode state.
+extern "C" void __stdcall SetEnableFullScreen(int enable) {
+  EqGame::SetEnableFullScreen(enable);  // 0 = Windowed mode, 1 = Full screen mode.
+}
+
+// Sets a callback to execute immediately after the eqmain.dll is loaded into memory.
+extern "C" void __stdcall SetEqMainInitFn(void(__cdecl* init_fn)()) {
+  EqGame::SetEqMainInitFn(init_fn);  // May get called repeatedly.
+}
+
+// Sets a callback to execute immediately after the eqgfx_dx8.dll is loaded into memory.
+extern "C" void __stdcall SetEqGfxInitFn(void(__cdecl* init_fn)()) {
+  EqGame::SetEqGfxInitFn(init_fn);  // Called after eqw does it's hooks.
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {

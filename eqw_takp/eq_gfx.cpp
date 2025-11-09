@@ -131,7 +131,8 @@ HRESULT WINAPI User32SetWindowPosHook(HWND hWnd, HWND hWndInsertAfter, int X, in
 }
 
 // Initializes state and installs the initial hooks into the dll.
-void InitializeEqGfx(HMODULE handle, std::function<void(int width, int height)> set_client_size_callback) {
+void InitializeEqGfx(HMODULE handle, void(__cdecl* init_fn)(),
+                     std::function<void(int width, int height)> set_client_size_callback) {
   // base = DWORD(handle);
   hwnd_ = nullptr;  // This must be set later with SetWindow() before more active use.
   set_client_size_cb_ = set_client_size_callback;
@@ -144,14 +145,17 @@ void InitializeEqGfx(HMODULE handle, std::function<void(int width, int height)> 
   hook_SetWindowLongA_ = IATHook(handle, "user32.dll", "SetWindowLongA", User32SetWindowLongAHook);
   hook_SetWindowPos_ = IATHook(handle, "user32.dll", "SetWindowPos", User32SetWindowPosHook);
   // t3dChangeDeviceResolution = (DWORD)GetProcAddress(handle, "t3dChangeDeviceResolution");
+
+  if (init_fn) init_fn();  // Execute registered callback if provided with one.
 }
 
 }  // namespace
 }  // namespace EqGfxInt
 
-void EqGfx::Initialize(HMODULE handle, std::function<void(int width, int height)> set_client_size_callback) {
+void EqGfx::Initialize(HMODULE handle, void(__cdecl* init_fn)(),
+                       std::function<void(int width, int height)> set_client_size_callback) {
   std::cout << "EqGfx::Initialize()" << std::endl;
-  EqGfxInt::InitializeEqGfx(handle, set_client_size_callback);
+  EqGfxInt::InitializeEqGfx(handle, init_fn, set_client_size_callback);
 }
 
 void EqGfx::SetWindow(HWND wnd) { EqGfxInt::hwnd_ = wnd; }

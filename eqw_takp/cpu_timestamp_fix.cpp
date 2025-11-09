@@ -7,8 +7,8 @@
 
 // Optional high frequency cpu patch hooks.
 FunctionHook hook_GetTimebase_((LONGLONG(__cdecl *)())(nullptr));
-FunctionHook hook_GetCpuSpeed2_((LONGLONG(__cdecl *)())(nullptr));
-FunctionHook hook_GetCpuSpeed3_((LONGLONG(__cdecl *)())(nullptr));
+FunctionHook hook_GetCpuSpeed2_((LONGLONG(__stdcall *)())(nullptr));
+FunctionHook hook_GetCpuSpeed3_((LONGLONG(__stdcall *)())(nullptr));
 
 // The first fix replaces the rdtsc call with a more time deterministic QPC call. This is
 // called repeatedly by the game's timebase call. The i64FirstTimeStampTicks is set by a
@@ -23,7 +23,7 @@ LONGLONG __cdecl GetTimebaseHook() {
 
 // The second fix reports an accurate frequency in timebase ticks per millisecond.
 // The client stores this in a 64-bit global used as a division factor in the timebase call.
-LONGLONG __cdecl GetCpuSpeed2Hook() {
+LONGLONG __stdcall GetCpuSpeed2Hook() {
   LARGE_INTEGER frequency;
   QueryPerformanceFrequency(&frequency);
   LONGLONG ticks_per_ms = frequency.QuadPart / 1000;

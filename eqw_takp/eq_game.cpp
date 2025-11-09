@@ -58,6 +58,8 @@ std::filesystem::path ini_path_;  // Full path filename for eqw.ini file.
 HWND hwnd_ = nullptr;             // Primary shared visible window handle.
 HICON hicon_large_ = nullptr;     // Icons retrieved from the executable.
 HICON hicon_small_ = nullptr;     // Icons retrieved from the executable.
+void(__cdecl* eqmain_init_fn_)() = nullptr;
+void(__cdecl* eqgfx_init_fn_)() = nullptr;
 
 // Hooks to enable hooking the other libraries and supporting windowed mode.
 IATHook hook_LoadLibrary_;
@@ -190,10 +192,10 @@ HMODULE WINAPI Kernel32LoadLibraryAHook(LPCSTR lpLibFileName) {
   HMODULE hmod = hook_LoadLibrary_.original(Kernel32LoadLibraryAHook)(lpLibFileName);
   if (hmod) {
     if (!_stricmp(lpLibFileName, "eqmain.dll")) {
-      EqMain::Initialize(hmod, hwnd_);
+      EqMain::Initialize(hmod, hwnd_, eqmain_init_fn_);
     }
     if (!_stricmp(lpLibFileName, "eqgfx_dx8.dll")) {
-      EqGfx::Initialize(hmod, [](int width, int height) { SetClientSize(width, height); });
+      EqGfx::Initialize(hmod, eqgfx_init_fn_, [](int width, int height) { SetClientSize(width, height); });
       CpuTimestampFix::Initialize(ini_path_);
     }
   }
@@ -285,14 +287,14 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_SYSCOMMAND:
       if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Suppress alt activated menu keys.
       if ((wParam & 0xfff0) == SC_MAXIMIZE) {
-        if (*(void **)0x00809478 == nullptr) SetClientSize(kStartupWidth, kStartupHeight, true);
+        if (*(void**)0x00809478 == nullptr) SetClientSize(kStartupWidth, kStartupHeight, true);
         return 0;
       }
       break;
 
     case WM_PAINT:
-      if (*(void **)0x00809478 != nullptr) {  // Check if the primary game object is allocated.
-        ValidateRect(hwnd, nullptr);          // Removes entire client area from the update region.
+      if (*(void**)0x00809478 != nullptr) {  // Check if the primary game object is allocated.
+        ValidateRect(hwnd, nullptr);         // Removes entire client area from the update region.
       } else {
         PaintIcon(hwnd);
       }
@@ -302,6 +304,12 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_GETTEXT:
     case WM_NCCALCSIZE:
       // execute_eqgame_wndproc = true;
+      break;
+
+    case WM_USER:
+      full_screen_mode_ = (wParam != 0);
+      std::cout << "Full screen mode set to: " << full_screen_mode_ << std::endl;
+      // TODO TODO: Trigger update if the mode changed.
       break;
 
     default:
@@ -349,3 +357,13 @@ void EqGame::Initialize() {
 HWND EqGame::GetGameWindow() {
   return EqGameInt::hwnd_;  // Handle to common shared game window.
 }
+
+int EqGame::GetEnableFullScreen() {
+  return EqGameInt::full_screen_mode_;  // Note cross-threading is possible.
+}
+
+void EqGame::SetEnableFullScreen(int enable) { PostMessageA(EqGameInt::hwnd_, WM_USER, enable, 0); }
+
+void EqGame::SetEqMainInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqmain_init_fn_ = init_fn; }
+
+void EqGame::SetEqGfxInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqgfx_init_fn_ = init_fn; }

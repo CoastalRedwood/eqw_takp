@@ -8,5 +8,5 @@
 // and DestroyWindow calls.
 
 namespace EqMain {
-void Initialize(HMODULE handle, HWND hWnd);
+void Initialize(HMODULE handle, HWND hWnd, void(__cdecl* init_fn)());
 }  // namespace EqMain

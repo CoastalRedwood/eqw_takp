@@ -447,9 +447,10 @@ LONG WINAPI User32SetWindowLongAHook(HWND wnd, int index, long dwNewLong) {
 
 // Initializes state and installs the hooks to bootstrap the rest.
 // Note that unlike eqgame, this will get called multiple times if dropping back to login screen.
-void InitializeEqMain(HMODULE handle, HWND hwnd) {
+void InitializeEqMain(HMODULE handle, HWND hwnd, void(__cdecl* init_fn)()) {
   hwnd_ = hwnd;
   eqmain_wndproc_ = nullptr;
+
   DInputManager::Initialize(handle);
 
   // This state should have been cleaned up by the previous release but just in case clean them.
@@ -468,12 +469,14 @@ void InitializeEqMain(HMODULE handle, HWND hwnd) {
   hook_ShowCursor_ = IATHook(handle, "user32.dll", "ShowCursor", User32ShowCursorHook);
   hook_GetCursorPos_ = IATHook(handle, "user32.dll", "GetCursorPos", User32GetCursorPosHook);
   hook_ClientToScreen_ = IATHook(handle, "user32.dll", "ClientToScreen", User32ClientToScreenHook);
+
+  if (init_fn) init_fn();  // Execute registered callback if provided with one.
 }
 
 }  // namespace
 }  // namespace EqMainInt
 
-void EqMain::Initialize(HMODULE handle, HWND hwnd) {
+void EqMain::Initialize(HMODULE handle, HWND hwnd, void(__cdecl* init_fn)()) {
   std::cout << "EqMain: Initialize" << std::endl;
-  EqMainInt::InitializeEqMain(handle, hwnd);
+  EqMainInt::InitializeEqMain(handle, hwnd, init_fn);
 }

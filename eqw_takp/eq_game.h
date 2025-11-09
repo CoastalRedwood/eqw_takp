@@ -7,4 +7,10 @@
 namespace EqGame {
 void Initialize();
 HWND GetGameWindow();
+
+int GetEnableFullScreen();
+void SetEnableFullScreen(int enable);
+void SetEqMainInitFn(void(__cdecl* init_fn)());
+void SetEqGfxInitFn(void(__cdecl* init_fn)());
+
 }  // namespace EqGame

@@ -3,3 +3,7 @@ EXPORTS
   InitializeEqwDll @1 NONAME
   GetVersionStr
   GetGameWindow
+  GetEnableFullScreen
+  SetEnableFullScreen
+  SetEqMainInitFn
+  SetEqGfxInitFn
