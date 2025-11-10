@@ -29,11 +29,7 @@ VTableHook hook_CreateDevice_;
 VTableHook hook_Reset_;
 
 IDirect3DDevice8* device_;
-// IDirect3DSurface8* surface;
 D3DPRESENT_PARAMETERS present_;
-// DWORD t3dChangeDeviceResolution;
-// DWORD base;
-bool reset_viewport_ = false;  // TODO: Obsolete?
 
 // Internal methods
 

@@ -93,7 +93,7 @@ void CreateEqWindow() {
   // Adjust the rect for the specified window style
   RECT rect = {0, 0, 640, 480};        // Client area size
   DWORD dwexstyle = kWindowExStyle;    // Fixed (no) flags.
-  DWORD dwstyle = kWindowStyleNormal;  // TODO: Read ini file?
+  DWORD dwstyle = kWindowStyleNormal;  // Used by eqmain.
   AdjustWindowRectEx(&rect, dwstyle, FALSE, 0);
   int win_width = rect.right - rect.left;
   int win_height = rect.bottom - rect.top;

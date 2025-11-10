@@ -6,9 +6,6 @@
 //    this dll and resources can be cycled in and out of memory.
 //  - With dgvoodoo's d3d8.dll active, the memory location of the ddraw.dll module was changing
 //    between login character select and back, so that library also may be getting reloaded.
-//
-// TODO:
-//  - Do a cleanup pass of some of the TODO's to prune out unnecessary code.
 
 #include "eq_main.h"
 
@@ -259,7 +256,7 @@ void UpdateClientRegion(HWND hwnd) {
   client_rect_ = {offset.x + client_rect_.left, offset.y + client_rect_.top, offset.x + client_rect_.right,
                   offset.y + client_rect_.bottom};
 
-  // TODO: Temporary sanity checking.
+  // This is just temporary sanity checking.
   int width = client_rect_.right - client_rect_.left;
   int height = client_rect_.bottom - client_rect_.top;
   if (width != kClientWidth || height != kClientHeight)
@@ -380,7 +377,7 @@ BOOL WINAPI User32SetForegroundWindowHook(HWND hWnd) {
   return true;
 }
 
-// TODO: This is primarily for logging and can be pruned out in the future.
+// Note: This is primarily for logging and could be pruned out in the future.
 HRESULT WINAPI User32SetWindowPosHook(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) {
   Logger::Info("EqMain: SetWindowPos %d %d %d %d 0x%x 0x%x", X, Y, cx, cy, (DWORD)hWndInsertAfter, uFlags);
   return hook_SetWindowPos_.original(User32SetWindowPosHook)(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);

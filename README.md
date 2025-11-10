@@ -1,21 +1,31 @@
 # Windowed-mode support for the TAKP client.
-  - Improves mouse behavior when switching windows focus
-  - Eliminates phantom input glitches when switching focus
-  - Automatically goes borderless if the ini resolution is set
-    to match the monitor
-  - Supports in-game toggling of stretched full screen mode
-  - Adds ini options settings for:
+## Features
+  - Significantly improved mouse and keyboard input behavior
+    - Eliminates phantom mouse and keyboard input glitches when switching focus back to game
+    - Wipes keydown states so game input goes to neutral (except autorun) when losing focus
+    - Synchronizes the game mouse position and win 32 cursor improvement to eliminate surprise
+      off screen clicks and loss of focus (also matches sensitivities across windows)
+    - Better locking of the mouse during RMB mouse look
+    - Reliable window clicking when clicking back into the game
+    - Cleaner cursor transitions across game window boundaries and as indicator of focus
+    - Should eliminate the common dinput mutex crash in current eqw
+  - Windowing mode improvements and features:
+    - Supports in-game setting of video modes (32-bit resolutions) without crashing
+    - Supports in-game toggling of stretched full screen mode (requires eqgame.dll support to activate)
+    - Automatically goes borderless if the ini resolution is set to match the monitor
+    - Generally cleaner window transitions and some polish like icons
+  - All ini settings were moved to eqclient.ini and adds ini options settings for:
     - High frequency cpu timebase fix
     - Swapping left / mouse buttons
     - Stretched full screen mode
-  - Supports in-game setting of video modes (32-bit resolutions)
-    and stores the window position offsets
+  - Supports lighter weight dgvoodoo alternative d3d8to9 (below)
 
----
-The eqgame.dll is a dummy placeholder for testing.
-
-Initial testing performed using either dgvoodoo or [d38to9](https://github.com/crosire/d3d8to9).
-See issues list below.
+## Installation
+  - Copy the eqw.dll to your client game directory
+  - Install (copy over) a compatible (updated) eqgame.dll file
+  - Review the Settings section below if any desire to modify defaults
+    - Run once so they populate defaults to modify
+  - See compatibility notes below for dgvoodoo or d3d8tod9
 
 ## Settings
 The eqw settings are stored in the `eqclient.ini` file under the following sections. The
@@ -57,7 +67,12 @@ general ones are read at boot time while the offsets are written and read while 
  - The `[VideoMode]: BitsPerPixel` value should be set to `32` (others are untested)
 
 
-## Known issues
+## Testing and Known issues
+
+The eqgame.dll is a dummy placeholder for testing.
+
+Initial testing performed using either dgvoodoo or [d38to9](https://github.com/crosire/d3d8to9).
+See issues list below.
  
 ### Stability and compatibility
  - d3d8to9 d3d8.dll:
@@ -74,7 +89,8 @@ general ones are read at boot time while the offsets are written and read while 
 - Since this always runs in windowed mode, the gamma fix feature of legacy eqw 2.32 was dropped
 - Transition glitches
    - Some dirty screens are briefly flashed to/from char select
- - Clean up debug logging
 
 ### OTHER:
- - Zeal breakage: eqw get_game_window() needs update, external map window is broken
+ - Zeal breakage (to fix in 1.3 update):
+   - Zeal cam left pan not working due to broken get_game_window()
+   - Zone map external map window is severely broken

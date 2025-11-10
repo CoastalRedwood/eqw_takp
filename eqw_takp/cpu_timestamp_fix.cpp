@@ -26,7 +26,7 @@ LONGLONG __stdcall GetCpuSpeed2Hook() {
   LARGE_INTEGER frequency;
   QueryPerformanceFrequency(&frequency);
   LONGLONG ticks_per_ms = frequency.QuadPart / 1000;
-  ::Sleep(1000u);  // TODO: This delay is probably not necessary.
+  ::Sleep(2);  // Reduced this delay from 1000 to 2 (just so delta time in ms is non-zero) vs sample patch.
   return ticks_per_ms;
 }
 
