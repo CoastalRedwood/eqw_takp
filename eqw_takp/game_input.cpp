@@ -8,7 +8,9 @@ namespace GameInputInt {
 namespace {
 
 HWND hwnd_ = nullptr;
-bool full_screen_mode_ = false;
+int game_width_ = 640;                                // Cached copy of current game screen width.
+int game_height_ = 480;                               // Cached copy of current game screen height.
+RECT game_rect_ = {0, 0, game_width_, game_height_};  // Cached client rect in screen coordinates.
 
 bool swap_mouse_buttons_ = false;
 
@@ -120,11 +122,17 @@ void SetGameMousePosition(int x, int y) {
 }
 
 // Resets the internal mouse state and makes the internal cursor invisible.
-void ResetMouseUpdateValues() {
-  SetGameMousePosition(32767, 32767);  // Off-screen so invisible and can't 'misclick' on something.
-  *g_mouse_rmb_down_mouse_look = 0;    // Disable all other dinput related outputs and state.
-  *g_mouse_lmb_down_previous = 0;
-  *g_mouse_rmb_down_previous = 0;
+void ResetMouseUpdateValues(bool full_reset = true) {
+  // CXWndManager can get into a broken state if the mouse up doesn't trigger properly (like
+  // left click dragging a window off the screen edge), so this should be called with
+  // full_reset set to false in the first loop.
+  if (full_reset) {
+    SetGameMousePosition(32767, 32767);  // Off-screen so invisible and can't 'misclick' on something.
+    *g_mouse_lmb_down_previous = 0;
+    *g_mouse_rmb_down_previous = 0;
+  }
+
+  *g_mouse_rmb_down_mouse_look = 0;  // Disable all other dinput related outputs and state.
   *g_mouse_rmb_down_from_dinput = 0;
   *g_mouse_lmb_down_from_dinput = 0;
   *g_mouse_x_delta_from_dinput = 0;
@@ -132,43 +140,53 @@ void ResetMouseUpdateValues() {
   *g_mouse_scroll_delta_ticks = 0;
 }
 
+// Updates the cached game client rect on the screen and active game width and height resolutions.
+void UpdateGameWindowParameters() {
+  POINT offset = {0, 0};
+  RECT rect;
+  if (::ClientToScreen(hwnd_, &offset) && ::GetClientRect(hwnd_, &rect)) {
+    game_rect_.left = rect.left + offset.x;  // Store in screen coordinates with left, top as x,y offset.
+    game_rect_.right = rect.right + offset.x;
+    game_rect_.top = rect.top + offset.y;
+    game_rect_.bottom = rect.bottom + offset.y;
+  }
+
+  bool mode = (*g_mouse_screen_mode == 1);  // Logic copied from SetMouseCenter.
+  game_width_ = mode ? *g_mouse_screen_res_x : (*g_mouse_screen_rect_left + *g_mouse_screen_rect_right);
+  game_height_ = mode ? *g_mouse_screen_res_y : (*g_mouse_screen_rect_top + *g_mouse_screen_rect_bottom);
+  game_width_ = max(game_width_, 640);  // Ensure always non-zero.
+  game_height_ = max(game_height_, 480);
+}
+
+// DirectX will scale the game resolution to fit the screen (full scale expansion or height compression).
+bool IsScaledMode() {
+  return ((game_width_ != game_rect_.right - game_rect_.left) || (game_height_ != game_rect_.bottom - game_rect_.top));
+}
+
 // Synchronizes the internal cursor position to the win32 cursor for smooth transitions.
 void SyncToWin32Cursor() {
   POINT cursor;
-  GetCursorPos(&cursor);  // This returns absolute screen x, y.
-  POINT corner = {0};
-  ClientToScreen(hwnd_, &corner);
-  cursor.x -= corner.x;
-  cursor.y -= corner.y;
-  if (full_screen_mode_) {  // In full screen mode the image may be scaled.
-    RECT rect;
-    ::GetClientRect(hwnd_, &rect);
-    bool mode = (*g_mouse_screen_mode == 1);  // Logic copied from SetMouseCenter.
-    int width = mode ? *g_mouse_screen_res_x : (*g_mouse_screen_rect_left + *g_mouse_screen_rect_right);
-    int height = mode ? *g_mouse_screen_res_y : (*g_mouse_screen_rect_top + *g_mouse_screen_rect_bottom);
-    cursor.x = cursor.x * width / (rect.right - rect.left);
-    cursor.y = cursor.y * height / (rect.bottom - rect.top);
+  ::GetCursorPos(&cursor);  // This returns absolute screen x, y.
+
+  cursor.x -= game_rect_.left;
+  cursor.y -= game_rect_.top;
+  if (IsScaledMode()) {
+    cursor.x = cursor.x * game_width_ / (game_rect_.right - game_rect_.left);
+    cursor.y = cursor.y * game_height_ / (game_rect_.bottom - game_rect_.top);
   }
   SetGameMousePosition(cursor.x, cursor.y);
 }
 
 // Synchronizes the win32 cursor to the internal cursor position.
 void SetWin32CursorToClientPosition(POINT pt) {
-  if (!full_screen_mode_) {
-    ClientToScreen(hwnd_, &pt);
-  } else {
-    RECT rect;
-    ::GetClientRect(hwnd_, &rect);
-    POINT corner = {0};
-    ClientToScreen(hwnd_, &corner);
-    bool mode = (*g_mouse_screen_mode == 1);  // Logic copied from SetMouseCenter.
-    int width = mode ? *g_mouse_screen_res_x : (*g_mouse_screen_rect_left + *g_mouse_screen_rect_right);
-    int height = mode ? *g_mouse_screen_res_y : (*g_mouse_screen_rect_top + *g_mouse_screen_rect_bottom);
-    pt.x = pt.x * (rect.right - rect.left) / width + corner.x;
-    pt.y = pt.y * (rect.bottom - rect.top) / height + corner.y;
+  if (IsScaledMode()) {
+    pt.x = pt.x * (game_rect_.right - game_rect_.left) / game_width_;
+    pt.y = pt.y * (game_rect_.bottom - game_rect_.top) / game_height_;
   }
+  pt.x += game_rect_.left;
+  pt.y += game_rect_.top;
 
-  SetCursorPos(pt.x, pt.y);
+  ::SetCursorPos(pt.x, pt.y);
 }
 
 // Sets the internal cursor location and synchronizes the win32 cursor with it.
@@ -179,10 +197,7 @@ void SetBothCursorsToClientPosition(POINT pt) {
 
 // Sets the internal cursor location to the middle of the screen.
 void SetWin32CursorToCenter() {
-  bool mode = (*g_mouse_screen_mode == 1);  // Logic copied from SetMouseCenter.
-  int width = mode ? *g_mouse_screen_res_x : (*g_mouse_screen_rect_left + *g_mouse_screen_rect_right);
-  int height = mode ? *g_mouse_screen_res_y : (*g_mouse_screen_rect_top + *g_mouse_screen_rect_bottom);
-  POINT center = {width / 2, height / 2};
+  POINT center = {game_width_ / 2, game_height_ / 2};
   SetWin32CursorToClientPosition(center);
 }
 
@@ -192,13 +207,7 @@ bool IsMouseOverClient() {
 
   POINT cursor;
   ::GetCursorPos(&cursor);  // This returns absolute screen x, y.
-  POINT offset = {0, 0};
-  ::ClientToScreen(hwnd_, &offset);
-  cursor.x -= offset.x;
-  cursor.y -= offset.y;
-  RECT rect;
-  ::GetClientRect(hwnd_, &rect);
-  return ::PtInRect(&rect, cursor);
+  return ::PtInRect(&game_rect_, cursor);
 }
 
 // This hook is called near the beginning of input processing in each of the primary game loops.
@@ -220,6 +229,8 @@ int __cdecl GetMouseDataRelHook() {
   static bool prev_has_focus = false;
 
   bool has_focus = (::GetForegroundWindow() == hwnd_ && !::IsIconic(hwnd_));
+
+  UpdateGameWindowParameters();  // Updates cached values used in calls below.
   bool over_client = IsMouseOverClient();
   bool internal_mode = has_focus && (over_client || *g_mouse_rmb_down_mouse_look);
 
@@ -229,15 +240,16 @@ int __cdecl GetMouseDataRelHook() {
   }
 
   if (!internal_mode) {
+    bool full_reset = mouse_disabled;  // For the first loop do not move mouse off screen.
     mouse_disabled = true;
-    ResetMouseUpdateValues();  // Drains the buffers and moves the cursor off screen.
+    ResetMouseUpdateValues(full_reset);  // Drains the buffers and moves the cursor off screen.
     return 0;
   }
 
   if (mouse_disabled) {
     mouse_disabled = false;
     SyncToWin32Cursor();                              // Updates internal cursor position to match win32.
-    ::SendMessage(hwnd_, WM_SETCURSOR, 0, HTCLIENT);  // Queue the WndProc to update the cursor visibility.
+    ::SendMessage(hwnd_, WM_SETCURSOR, 0, HTCLIENT);  // Queue the WndProc (blocking) to update the cursor visibility.
   }
 
   unsigned int result = hook_get_mouse_data_rel_.original(GetMouseDataRelHook)();
@@ -285,7 +297,10 @@ void __fastcall RightMouseDownHook(void* this_ptr, int unused_edx, short x, shor
 
 void Initialize(HWND hwnd, bool swap_mouse_buttons) {
   hwnd_ = hwnd;
-  full_screen_mode_ = false;
+  game_width_ = 640;  // Safe defaults until first hooked update.
+  game_height_ = 480;
+  game_rect_ = {0, 0, game_width_, game_height_};
+
   swap_mouse_buttons_ = swap_mouse_buttons;
   saved_rmouse_pt_ = {0, 0};
 
