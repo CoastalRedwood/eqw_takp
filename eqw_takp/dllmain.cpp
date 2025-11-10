@@ -22,13 +22,13 @@ extern "C" HWND __stdcall GetGameWindow() {
   return EqGame::GetGameWindow();  // Primary game window.
 }
 
-// Returns the current state of the internal flag. Note that the SetEnableFullScreen()
-// triggers a window message that may cross threads so this may not update immediately.
+// Returns the current state of the internal flag.
 extern "C" int __stdcall GetEnableFullScreen() {
   return EqGame::GetEnableFullScreen();  // 0 = Windowed mode, 1 = Full screen mode.
 }
 
-// Posts a windows message request to set the full screen mode state.
+// Performs a blocking SendMessage() call that will block this thread until the
+// WndProc method on the main thread processes this message.
 extern "C" void __stdcall SetEnableFullScreen(int enable) {
   EqGame::SetEnableFullScreen(enable);  // 0 = Windowed mode, 1 = Full screen mode.
 }

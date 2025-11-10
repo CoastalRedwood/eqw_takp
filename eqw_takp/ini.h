@@ -67,8 +67,11 @@ T GetValue(std::string section, std::string key, const char* filename) {
   char buffer[256];
   DWORD bytes_read = ::GetPrivateProfileStringA(section.c_str(), key.c_str(), "", buffer, sizeof(buffer), filename);
 
+  // Support defaulting to either false, "", or 0 if the ini entry doesn't exist.
   if (bytes_read == 0) {
-    return T{};
+    if constexpr (std::is_same_v<T, bool>) return false;
+    if constexpr (std::is_same_v<T, std::string>) return T{""};
+    return T{0};
   }
   if constexpr (std::is_same_v<T, std::string>) return buffer;
   return ConvertFromString<T>(std::string(buffer));

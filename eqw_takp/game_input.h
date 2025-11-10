@@ -6,8 +6,8 @@
 
 namespace GameInput {
 
-void Initialize(HWND hwnd);  // Resets state and installs client hooks.
-void HandleLossOfFocus();    // Resets state when the client loses focus.
-void HandleGainOfFocus();    // Updates state when the client regains focus.
+void Initialize(HWND hwnd, bool swap_mouse_buttons);  // Resets state and installs client hooks.
+void HandleLossOfFocus();                             // Resets state when the client loses focus.
+void HandleGainOfFocus();                             // Updates state when the client regains focus.
 
 }  // namespace GameInput

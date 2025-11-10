@@ -285,10 +285,10 @@ void __fastcall RightMouseDownHook(void* this_ptr, int unused_edx, short x, shor
   }
 }
 
-void Initialize(HWND hwnd) {
+void Initialize(HWND hwnd, bool swap_mouse_buttons) {
   hwnd_ = hwnd;
   full_screen_mode_ = false;
-  swap_mouse_buttons_ = false;
+  swap_mouse_buttons_ = swap_mouse_buttons;
   saved_rmouse_pt_ = {0, 0};
 
   hook_get_mouse_data_rel_.Initialize(0x0055B3B9, GetMouseDataRelHook, FunctionHook::HookType::Detour);
@@ -299,8 +299,8 @@ void Initialize(HWND hwnd) {
 }  // namespace
 }  // namespace GameInputInt
 
-void GameInput::Initialize(HWND hwnd) {
-  GameInputInt::Initialize(hwnd);  // Resets state and installs the hooks.
+void GameInput::Initialize(HWND hwnd, bool swap_mouse_buttons) {
+  GameInputInt::Initialize(hwnd, swap_mouse_buttons);  // Resets state and installs the hooks.
 }
 
 void GameInput::HandleGainOfFocus() {

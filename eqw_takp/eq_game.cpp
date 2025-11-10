@@ -17,39 +17,15 @@
 #include "ini.h"
 #include "vtable_hook.h"
 
-// TODO: Stability and compatibility
-// - d3d8to9: No issues.
-// - intel gpu w/out d3d8.dll: black screen (but game is running in background with sounds and ui)
-// - dgvoodoo:
-//   - Crashes char select -> login w/out ever entering world (dx 6.0 error dialog, same as old eqw)
-//   - It is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)
-//   - Without dgvoodoo ddraw.dll it hangs with a black screen trying to go back into eqmain
-//
-// - Review threading: EqGame is spinning off a separate processing thread for the primary
-//   game loops so think through threading and synchronization of video res changes
-//
-// TODO: Features / polishing
-//// - Add additional dll exports along the lines of GetGameWindow()
-//   - maybe swapmouse, fullscreen, resolution?
-// - Transition glitches:
-//   - Some title bars are squared vs rounded temporarily
-//   - Some dirty screens are briefly flashed to/from char select
-// - Improve INI settings (location, storing, sanity check values, other options)
-// - Video modes: changing in ini, changing in-game, full screen mode
-// - Support mouse button swap
-// - Clean up debug logging
-//
-// OTHER:
-// - Zeal breakage: eqw get_game_window() needs update, external map window is broken
-
 // Using an EqGameInt namespace instead of a purely static class to reduce the qualifier clutter. The
 // anonymous namespace forces it to private internal scope.
 namespace EqGameInt {
 namespace {
 static constexpr int kStartupWidth = 640;  // Default eqmain size.
 static constexpr int kStartupHeight = 480;
+static constexpr DWORD kWindowExStyle = 0;  // No flags.
 static constexpr DWORD kWindowStyleNormal = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME;
-static constexpr DWORD kWindowStyleFullScreen = WS_POPUPWINDOW | WS_VISIBLE;  // TODO: | WS_MAXIMIZE?
+static constexpr DWORD kWindowStyleFullScreen = WS_POPUPWINDOW | WS_VISIBLE;
 
 // State and resources updated at initialization.
 std::ofstream debug_log_file_;    // Status updates are streamed here.
@@ -73,21 +49,20 @@ IATHook hook_ShowWindow_;
 bool full_screen_mode_ = false;     // Enables full screen (non-windowed).
 WNDPROC eqgame_wndproc_ = nullptr;  // Stores eqgame.exe's wndproc.
 bool isFocused_ = false;
-RECT client_rect_ = {0, 0, 640, 480};    // Screen coordinates of client rect.
-RECT stored_dimensions_ = client_rect_;  // Stored when maximized.
 
 // Internal methods.
 
 LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Updates the client_rect_ variable to the current screen coordinates.
-void UpdateClientRegion() {
-  // Convert the client area point (0, 0) to screen coordinates and add it to the current client rect size.
-  POINT offset = {0, 0};
-  ::ClientToScreen(hwnd_, &offset);
-  ::GetClientRect(hwnd_, &client_rect_);
-  client_rect_ = {offset.x + client_rect_.left, offset.y + client_rect_.top, offset.x + client_rect_.right,
-                  offset.y + client_rect_.bottom};
+// Returns true if the primary EQ game object is allocated.
+bool IsGameInitialized() {
+  return (*(void**)0x00809478 != nullptr);  // Created after login and destroyed before returning.
+}
+
+// Returns true if in the active in world game state.
+bool IsGameInGameState() {
+  const int* eq = *reinterpret_cast<int**>(0x00809478);
+  return eq && eq[0x5AC / 4] == 5;  // Check the game state stored in the EQ object.
 }
 
 // Creates the common, shared window used by eqgame and eqmain.
@@ -119,6 +94,7 @@ void CreateEqWindow() {
 
   // Adjust the rect for the specified window style
   RECT rect = {0, 0, 640, 480};        // Client area size
+  DWORD dwexstyle = kWindowExStyle;    // Fixed (no) flags.
   DWORD dwstyle = kWindowStyleNormal;  // TODO: Read ini file?
   AdjustWindowRectEx(&rect, dwstyle, FALSE, 0);
   int win_width = rect.right - rect.left;
@@ -126,15 +102,15 @@ void CreateEqWindow() {
   int x = (GetSystemMetrics(SM_CXSCREEN) - win_width) / 2;
   int y = (GetSystemMetrics(SM_CYSCREEN) - win_height) / 2;
 
-  hwnd_ =
-      CreateWindowExA(0, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width, win_height, NULL, NULL, NULL, NULL);
+  hwnd_ = CreateWindowExA(dwexstyle, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width, win_height, NULL, NULL,
+                          NULL, NULL);
   EqGfx::SetWindow(hwnd_);
-  UpdateClientRegion();
 
-  GameInput::Initialize(hwnd_);  // Install mouse and keyboard handling hooks.
-
-  // ShowWindow(hwnd_, SW_SHOW);
-  // UpdateWindow(hwnd_);  // This forces the window to be updated and painted
+  full_screen_mode_ = Ini::GetValue<bool>("EqwGeneral", "FullScreenMode", ini_path_.string().c_str());
+  bool swap_mouse_buttons = Ini::GetValue<bool>("EqwGeneral", "SwapMouseButtons", ini_path_.string().c_str());
+  Ini::SetValue("EqwGeneral", "FullScreenMode", full_screen_mode_, ini_path_.string().c_str());
+  Ini::SetValue("EqwGeneral", "SwapMouseButtons", full_screen_mode_, ini_path_.string().c_str());
+  GameInput::Initialize(hwnd_, swap_mouse_buttons);  // Install mouse and keyboard handling hooks.
 }
 
 // The game client creates a window with the flags set to topmost maximize it, which we ignore.
@@ -160,32 +136,46 @@ void SetClientSize(int client_width, int client_height, bool center = false) {
     client_height = max(client_height, kStartupHeight);
     center = true;
   }
-  // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
-  DWORD dwStyle = (DWORD)GetWindowLong(hwnd_, GWL_STYLE);
-  DWORD dwExStyle = (DWORD)GetWindowLong(hwnd_, GWL_EXSTYLE);
-  RECT desiredRect = {0, 0, client_width, client_height};
-  AdjustWindowRectEx(&desiredRect, dwStyle, FALSE, dwExStyle);
 
-  // Calculate the width and height including non-client areas
-  int width = desiredRect.right - desiredRect.left;
-  int height = desiredRect.bottom - desiredRect.top;
+  // Retrieve the screen coordinates of the monitor with the most current window overlap.
+  MONITORINFO monitor_info;
+  monitor_info.cbSize = sizeof(monitor_info);
+  GetMonitorInfo(::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &monitor_info);
+  RECT rect(monitor_info.rcMonitor);
+  int full_width = rect.right - rect.left;
+  int full_height = rect.bottom - rect.top;
+  bool full_screen =
+      IsGameInitialized() && (full_screen_mode_ || ((client_width == full_width) && (client_height == full_height)));
+
+  std::cout << "EqGame: Full " << full_screen << " W " << full_width << " H " << full_height;
+  std::cout << " CW " << client_width << " CH " << client_height << std::endl;
+
+  // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
+  int width = full_screen ? full_width : client_width;
+  int height = full_screen ? full_height : client_height;
+  DWORD style = full_screen ? kWindowStyleFullScreen : kWindowStyleNormal;
+  DWORD ex_style = kWindowExStyle;
+  RECT desiredRect = {0, 0, width, height};
+  AdjustWindowRectEx(&desiredRect, style, FALSE, ex_style);
+  width = desiredRect.right - desiredRect.left;
+  height = desiredRect.bottom - desiredRect.top;
 
   int x = 0;
   int y = 0;
-  if (center) {
+  if (full_screen || center) {
     x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
     y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
   } else {
     std::stringstream ss;
     ss << client_width << "by" << client_height;
-    x = Ini::GetValue<int>("Positions", ss.str() + "X", ini_path_.string().c_str());
-    y = Ini::GetValue<int>("Positions", ss.str() + "Y", ini_path_.string().c_str());
+    x = Ini::GetValue<int>("EqwOffsets", ss.str() + "X", ini_path_.string().c_str());
+    y = Ini::GetValue<int>("EqWOffsets", ss.str() + "Y", ini_path_.string().c_str());
   }
   std::cout << "EqGame: Set window position: " << x << " " << y << " " << width << " x " << height << std::endl;
 
-  // Set the window size and position
-  ::SetWindowPos(hwnd_, NULL, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-  UpdateClientRegion();
+  // Update the window style, size, and position.
+  ::SetWindowLongA(hwnd_, GWL_STYLE, style);
+  ::SetWindowPos(hwnd_, HWND_TOP, x, y, width, height, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW);
 }
 
 HMODULE WINAPI Kernel32LoadLibraryAHook(LPCSTR lpLibFileName) {
@@ -204,13 +194,12 @@ HMODULE WINAPI Kernel32LoadLibraryAHook(LPCSTR lpLibFileName) {
 
 // Block the client from ever trying to capture the mouse.
 HWND WINAPI User32SetCaptureHook(HWND hWnd) {
-  // ::ShowWindow(hWnd, SW_HIDE); // TODO TODO: Try to force an activate
-  GameInput::HandleGainOfFocus();  // TODO TODO Testing
   std::cout << "EqGame: Blocking SetCapture" << std::endl;
+  GameInput::HandleGainOfFocus();  // Likely unnecessary but a convenient callback to reset inputs.
   return NULL;
 }
 
-// Block the disabling of the IDC_ARROW cursor.
+// Block the game's disabling of the IDC_ARROW cursor (controlled by eqw).
 HCURSOR WINAPI User32SetCursorHook(HCURSOR hcursor) {
   std::cout << "EqGame: Blocking SetCursor: " << (DWORD)hcursor << std::endl;
   return hcursor;
@@ -218,8 +207,7 @@ HCURSOR WINAPI User32SetCursorHook(HCURSOR hcursor) {
 
 // Disable the show cursor call to make the win32 cursor always visible (including title bar).
 int WINAPI User32ShowCursorHook(BOOL show) {
-  std::cout << "EqGame: Ignoring ShowCursor and setting it visible"
-            << std::endl;  // TODO Blocking ShowCursor: " << show << std::endl;
+  std::cout << "EqGame: Overriding ShowCursor to set it visible" << std::endl;
   int count = ::ShowCursor(true);
   int target = 0;                                      // Make it precisely visible.
   while (count < target) count = ::ShowCursor(true);   // Count up to target.
@@ -237,13 +225,14 @@ void InstallHooks(HMODULE handle) {
   hook_LoadLibrary_ = IATHook(handle, "kernel32.dll", "LoadLibraryA", Kernel32LoadLibraryAHook);
   hook_CreateWindow_ = IATHook(handle, "user32.dll", "CreateWindowExA", User32CreateWindowExAHook);
   hook_SetCapture_ = IATHook(handle, "user32.dll", "SetCapture", User32SetCaptureHook);
-  hook_SetCursor_ = IATHook(handle, "user32.dll", "SetCursor", User32SetCursorHook);     // TODO: TBD if needed.
-  hook_ShowCursor_ = IATHook(handle, "user32.dll", "ShowCursor", User32ShowCursorHook);  // TODO: TBD if needed.
+  hook_SetCursor_ = IATHook(handle, "user32.dll", "SetCursor", User32SetCursorHook);
+  hook_ShowCursor_ = IATHook(handle, "user32.dll", "ShowCursor", User32ShowCursorHook);
   hook_ShowWindow_ = IATHook(handle, "user32.dll", "ShowWindow", User32ShowWindowHook);
 
   DInputManager::Initialize(handle);
 }
 
+// Paints the executable icon to the screen.
 void PaintIcon(HWND hwnd) {
   if (!hicon_large_) return;
 
@@ -254,6 +243,35 @@ void PaintIcon(HWND hwnd) {
   int top = (kStartupHeight - size) / 2;
   DrawIconEx(hdc, left, top, hicon_large_, size, size, 0, 0, DI_NORMAL);
   EndPaint(hwnd, &ps);
+}
+
+// Updates the stored window offsets for the active window.
+void StoreWindowOffsets() {
+  if (full_screen_mode_ || !IsGameInGameState()) return;
+
+  RECT rect;
+  if (!::GetWindowRect(hwnd_, &rect)) return;
+  int client_width = *reinterpret_cast<int*>(0x00798564);   // Game global screen x resolution.
+  int client_height = *reinterpret_cast<int*>(0x00798568);  // Game global screen y resolution.
+
+  std::stringstream ss;
+  ss << client_width << "by" << client_height;
+  Ini::SetValue("EqwOffsets", ss.str() + "X", rect.left, ini_path_.string().c_str());
+  Ini::SetValue("EqwOffsets", ss.str() + "Y", rect.top, ini_path_.string().c_str());
+}
+
+// Toggles full screen mode.
+void SetFullScreenMode(bool enable) {
+  bool change = (full_screen_mode_ != enable);
+  full_screen_mode_ = enable;
+  std::cout << "Full screen mode set to: " << full_screen_mode_ << std::endl;
+  if (!change) return;
+
+  // This client size call will handle the full screen window style or maximizing flag as
+  // needed based on the d3d resolution versus screen resolution.
+  int width = IsGameInitialized() ? *reinterpret_cast<int*>(0x00798564) : kStartupWidth;
+  int height = IsGameInitialized() ? *reinterpret_cast<int*>(0x00798568) : kStartupHeight;
+  SetClientSize(width, height);
 }
 
 // Window processing loop for the primary window. Note that it is replaced by eqmain when
@@ -271,8 +289,7 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
       break;
 
     case WM_WINDOWPOSCHANGED:
-      UpdateClientRegion();  // TODO: Force the client rect to be the surface size (Threading?)
-      // TODO: Save the ini location.
+      StoreWindowOffsets();
       return 0;
 
     case WM_SETCURSOR:
@@ -287,14 +304,14 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_SYSCOMMAND:
       if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Suppress alt activated menu keys.
       if ((wParam & 0xfff0) == SC_MAXIMIZE) {
-        if (*(void**)0x00809478 == nullptr) SetClientSize(kStartupWidth, kStartupHeight, true);
+        if (!IsGameInitialized()) SetClientSize(kStartupWidth, kStartupHeight, true);
         return 0;
       }
       break;
 
     case WM_PAINT:
-      if (*(void**)0x00809478 != nullptr) {  // Check if the primary game object is allocated.
-        ValidateRect(hwnd, nullptr);         // Removes entire client area from the update region.
+      if (IsGameInitialized()) {      // Check if the primary game object is allocated.
+        ValidateRect(hwnd, nullptr);  // Removes entire client area from the update region.
       } else {
         PaintIcon(hwnd);
       }
@@ -307,9 +324,7 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
       break;
 
     case WM_USER:
-      full_screen_mode_ = (wParam != 0);
-      std::cout << "Full screen mode set to: " << full_screen_mode_ << std::endl;
-      // TODO TODO: Trigger update if the mode changed.
+      SetFullScreenMode(wParam != 0);
       break;
 
     default:
@@ -342,7 +357,7 @@ void InitializeIniFilename() {
   ::GetModuleFileNameA(NULL, buffer, FILENAME_MAX + 1);
   exe_path_ = std::filesystem::path(buffer);
   std::cout << "Exe path: " << exe_path_.string() << std::endl;
-  ini_path_ = exe_path_.parent_path() / "eqw.ini";
+  ini_path_ = exe_path_.parent_path() / "eqclient.ini";
   std::cout << "ini path: " << ini_path_.string() << std::endl;
 }
 }  // namespace
@@ -362,7 +377,12 @@ int EqGame::GetEnableFullScreen() {
   return EqGameInt::full_screen_mode_;  // Note cross-threading is possible.
 }
 
-void EqGame::SetEnableFullScreen(int enable) { PostMessageA(EqGameInt::hwnd_, WM_USER, enable, 0); }
+void EqGame::SetEnableFullScreen(int enable) {
+  // Note this is a cross-threading call (eq game processingi thread is spun off
+  // from the main thread with the wndproc) so it will block until that thread
+  // processes the message in the queue.
+  SendMessageA(EqGameInt::hwnd_, WM_USER, enable, 0);
+}
 
 void EqGame::SetEqMainInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqmain_init_fn_ = init_fn; }
 

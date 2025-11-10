@@ -33,7 +33,8 @@ LONGLONG __stdcall GetCpuSpeed2Hook() {
 
 // Optionally installs the hooks to fix the timebase.
 void CpuTimestampFix::Initialize(const std::filesystem::path &ini_file) {
-  bool disable = Ini::GetValue<int>("EqwGeneral", "DisableCpuTimebaseFix", ini_file.string().c_str());
+  bool disable = Ini::GetValue<bool>("EqwGeneral", "DisableCpuTimebaseFix", ini_file.string().c_str());
+  Ini::SetValue("EqwGeneral", "DisableCpuTimebaseFix", disable, ini_file.string().c_str());
   if (disable) return;
 
   LARGE_INTEGER dummy;  // Perform an OS support check before hooking.

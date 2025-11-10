@@ -68,11 +68,11 @@ class FunctionHook {
   void fatal_error();
   void patch_trampoline_relative_jumps();
 
-  int patch_address_ = 0;                             // Address to patch to jump to the callee.
-  int replacement_callee_addr = 0;                    // Address of the replacement function.
-  HookType hook_type_;                                // Type of replacement.
-  int orig_byte_count = 0;                            // Number of original patch bytes modified.
-  BYTE original_bytes[11];                            // 5 byte jump with 6 more bytes for opcode boundary.
-  BYTE trampoline_bytes[sizeof(original_bytes) + 5];  // Additional space for an 0xe9 jump opcode at end.
+  int patch_address_ = 0;                                   // Address to patch to jump to the callee.
+  int replacement_callee_addr = 0;                          // Address of the replacement function.
+  HookType hook_type_ = HookType::ReplaceCall;              // Type of replacement.
+  int orig_byte_count = 0;                                  // Number of original patch bytes modified.
+  BYTE original_bytes[11] = {0};                            // 5 byte jump with 6 more bytes for opcode boundary.
+  BYTE trampoline_bytes[sizeof(original_bytes) + 5] = {0};  // Additional space for an 0xe9 jump opcode at end.
   int trampoline = reinterpret_cast<int>(&trampoline_bytes[0]);
 };

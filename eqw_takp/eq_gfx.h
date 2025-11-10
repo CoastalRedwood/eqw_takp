@@ -9,6 +9,4 @@ namespace EqGfx {
 void Initialize(HMODULE handle, void(__cdecl* init_fn)(),
                 std::function<void(int width, int height)> set_client_size_callback);
 void SetWindow(HWND hwnd);
-void ResetViewport();
-void ChangeResolution(UINT width, UINT height);
 }  // namespace EqGfx
