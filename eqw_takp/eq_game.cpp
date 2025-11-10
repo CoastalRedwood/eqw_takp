@@ -109,7 +109,7 @@ void CreateEqWindow() {
   full_screen_mode_ = Ini::GetValue<bool>("EqwGeneral", "FullScreenMode", ini_path_.string().c_str());
   bool swap_mouse_buttons = Ini::GetValue<bool>("EqwGeneral", "SwapMouseButtons", ini_path_.string().c_str());
   Ini::SetValue("EqwGeneral", "FullScreenMode", full_screen_mode_, ini_path_.string().c_str());
-  Ini::SetValue("EqwGeneral", "SwapMouseButtons", full_screen_mode_, ini_path_.string().c_str());
+  Ini::SetValue("EqwGeneral", "SwapMouseButtons", swap_mouse_buttons, ini_path_.string().c_str());
   GameInput::Initialize(hwnd_, swap_mouse_buttons);  // Install mouse and keyboard handling hooks.
 }
 

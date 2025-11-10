@@ -1,7 +1,17 @@
 # Windowed-mode support for the TAKP client.
-  - Improves mouse behavior when focus switching
-  - Eliminates phantom input glitches when focus switching
- 
+  - Improves mouse behavior when switching windows focus
+  - Eliminates phantom input glitches when switching focus
+  - Automatically goes borderless if the ini resolution is set
+    to match the monitor
+  - Supports in-game toggling of stretched full screen mode
+  - Adds ini options settings for:
+    - High frequency cpu timebase fix
+    - Swapping left / mouse buttons
+    - Stretched full screen mode
+  - Supports in-game setting of video modes (32-bit resolutions)
+    and stores the window position offsets
+
+---
 The eqgame.dll is a dummy placeholder for testing.
 
 Initial testing performed using either dgvoodoo or [d38to9](https://github.com/crosire/d3d8to9).
