@@ -456,7 +456,10 @@ void InitializeEqMain(HMODULE handle, HWND hwnd, void(__cdecl* init_fn)()) {
   hook_GetCursorPos_ = IATHook(handle, "user32.dll", "GetCursorPos", User32GetCursorPosHook);
   hook_ClientToScreen_ = IATHook(handle, "user32.dll", "ClientToScreen", User32ClientToScreenHook);
 
-  if (init_fn) init_fn();  // Execute registered callback if provided with one.
+  if (init_fn) {
+    Logger::Info("EqMain: Executing external init callback");
+    init_fn();  // Execute registered callback if provided with one.
+  }
 }
 
 }  // namespace

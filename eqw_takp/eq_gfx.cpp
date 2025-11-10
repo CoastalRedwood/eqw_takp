@@ -55,6 +55,14 @@ HRESULT WINAPI D3DDeviceResetHook(IDirect3DDevice8* Device, D3DPRESENT_PARAMETER
 HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
                                     DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters,
                                     IDirect3DDevice8** ppReturnedDeviceInterface) {
+  // Don't interfere with any devices hooked to the non-game window (from custom add-ons).
+  if (hFocusWindow != hwnd_) {
+    Logger::Info("EqGfx: D3D device created for non-primary window 0x%x", (DWORD)hFocusWindow);
+    return hook_CreateDevice_.original(D3D8CreateDeviceHook)(pD3D, Adapter, DeviceType, hFocusWindow, BehaviorFlags,
+                                                             pPresentationParameters, ppReturnedDeviceInterface);
+  }
+
+  Logger::Info("EqGfx: Create device with format %d", present_.BackBufferFormat);
   pPresentationParameters->Windowed = true;
   pPresentationParameters->hDeviceWindow = hwnd_;
   Logger::Info("Create device hook %d", present_.BackBufferFormat);
@@ -74,7 +82,7 @@ HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE D
 
 // Hook the device creation to install further hooks.
 IDirect3D8* WINAPI D3D8Direct3DCreate8Hook(UINT SDK) {
-  Logger::Info("Direct3DCreate8 -- SDK Version: %d", SDK);
+  Logger::Info("EqGFX: Direct3DCreate8 -- SDK Version: %d", SDK);
   IDirect3D8* rval = hook_Direct3DCreate8_.original(D3D8Direct3DCreate8Hook)(SDK);
   void** vtable = *(void***)rval;
   hook_CreateDevice_ = VTableHook(vtable, 15, D3D8CreateDeviceHook, false);
@@ -130,7 +138,10 @@ void InitializeEqGfx(HMODULE handle, void(__cdecl* init_fn)(),
   hook_SetWindowPos_ = IATHook(handle, "user32.dll", "SetWindowPos", User32SetWindowPosHook);
   // t3dChangeDeviceResolution = (DWORD)GetProcAddress(handle, "t3dChangeDeviceResolution");
 
-  if (init_fn) init_fn();  // Execute registered callback if provided with one.
+  if (init_fn) {
+    Logger::Info("EqGfx: Executing external init callback");
+    init_fn();  // Execute registered callback if provided with one.
+  }
 }
 
 }  // namespace
