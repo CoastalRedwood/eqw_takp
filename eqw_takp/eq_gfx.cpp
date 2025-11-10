@@ -1,9 +1,8 @@
 #include "eq_gfx.h"
 
-#include <iostream>
-
 #include "d3dx8/d3d8.h"
 #include "iat_hook.h"
+#include "logger.h"
 #include "vtable_hook.h"
 
 // Notes:
@@ -50,7 +49,7 @@ HRESULT WINAPI D3DDeviceResetHook(IDirect3DDevice8* Device, D3DPRESENT_PARAMETER
   }
   HRESULT result = EqGfxInt::hook_Reset_.original(D3DDeviceResetHook)(Device, Parameters);
   if (SUCCEEDED(result)) {
-    std::cout << "EqGFX: Reset: " << Parameters->BackBufferWidth << " x " << Parameters->BackBufferHeight << std::endl;
+    Logger::Info("EqGFX: Reset: %d x %d", Parameters->BackBufferWidth, Parameters->BackBufferHeight);
     set_client_size_cb_(Parameters->BackBufferWidth, Parameters->BackBufferHeight);
     // SetEqMainSurfaceResolution(Parameters->BackBufferWidth, Parameters->BackBufferHeight);
   }
@@ -62,14 +61,12 @@ HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE D
                                     IDirect3DDevice8** ppReturnedDeviceInterface) {
   pPresentationParameters->Windowed = true;
   pPresentationParameters->hDeviceWindow = hwnd_;
-  std::cout << "Create device hook " << present_.BackBufferFormat << std::endl;
+  Logger::Info("Create device hook %d", present_.BackBufferFormat);
   HRESULT result = hook_CreateDevice_.original(D3D8CreateDeviceHook)(
       pD3D, Adapter, DeviceType, hwnd_, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
   present_ = *pPresentationParameters;
   if (SUCCEEDED(result)) {
-    std::cout << "EqGFX: D3D8CreateDeviceHook: " << present_.BackBufferWidth << " x " << present_.BackBufferHeight
-              << std::endl;
-
+    Logger::Info("EqGFX: D3D8CreateDeviceHook: %d x %d", present_.BackBufferWidth, present_.BackBufferHeight);
     void** vtable = *(void***)*ppReturnedDeviceInterface;
     hook_Reset_ = VTableHook(vtable, 14, D3DDeviceResetHook, false);
     set_client_size_cb_(present_.BackBufferWidth, present_.BackBufferHeight);
@@ -81,7 +78,7 @@ HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE D
 
 // Hook the device creation to install further hooks.
 IDirect3D8* WINAPI D3D8Direct3DCreate8Hook(UINT SDK) {
-  std::cout << "Direct3DCreate8 -- SDK Version: " << SDK << std::endl;
+  Logger::Info("Direct3DCreate8 -- SDK Version: %d", SDK);
   IDirect3D8* rval = hook_Direct3DCreate8_.original(D3D8Direct3DCreate8Hook)(SDK);
   void** vtable = *(void***)rval;
   hook_CreateDevice_ = VTableHook(vtable, 15, D3D8CreateDeviceHook, false);
@@ -91,32 +88,32 @@ IDirect3D8* WINAPI D3D8Direct3DCreate8Hook(UINT SDK) {
 
 // Override the style by fetching the active window style so the SetWindowPos call is accurate.
 BOOL WINAPI User32AdjustWindowRectHook(LPRECT lpRect, DWORD dwStyle, BOOL bMenu) {
-  std::cout << "EqGfx: Overriding window style in AdjustWindowRect" << std::endl;
+  Logger::Info("EqGfx: Overriding window style in AdjustWindowRect");
   dwStyle = ::GetWindowLongA(hwnd_, GWL_STYLE);
   return hook_AdjustWindowRect_.original(User32AdjustWindowRectHook)(lpRect, dwStyle, bMenu);
 }
 
 // Block the client from ever trying to capture the mouse.
 HWND WINAPI User32SetCaptureHook(HWND hWnd) {
-  std::cout << "EqGfx: Blocking SetCapture" << std::endl;
+  Logger::Info("EqGfx: Blocking SetCapture");
   return NULL;
 }
 
 // Block the disabling of the IDC_ARROW cursor by EqGfx.
 HCURSOR WINAPI User32SetCursorHook(HCURSOR hcursor) {
-  std::cout << "EqGfx: Blocking SetCursor " << hcursor << std::endl;
+  Logger::Info("EqGfx: Blocking SetCursor %d", (DWORD)hcursor);
   return hcursor;
 }
 
 // Block setting different window styles.
 LONG WINAPI User32SetWindowLongAHook(HWND wnd, int index, long dwNewLong) {
-  std::cout << "EqGfx: Blocking SetWindowLong: " << index << ", 0x" << std::hex << dwNewLong << std::dec << std::endl;
+  Logger::Info("EqGfx: Blocking SetWindowLong: %d, 0x%x", index, dwNewLong);
   return GetWindowLongA(wnd, index);
 }
 
 // This hook is just for debug / logging. Could possibly just block this and adjustrect completely.
 HRESULT WINAPI User32SetWindowPosHook(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) {
-  std::cout << "EqGFX: SetWindowPos: " << X << " " << Y << " " << cx << " " << cy << std::endl;
+  Logger::Info("EqGfx: SetWindowPos: %d %d %d %d", X, Y, cx, cy);
   return hook_SetWindowPos_.original(User32SetWindowPosHook)(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
   return S_FALSE;
 }
@@ -145,7 +142,7 @@ void InitializeEqGfx(HMODULE handle, void(__cdecl* init_fn)(),
 
 void EqGfx::Initialize(HMODULE handle, void(__cdecl* init_fn)(),
                        std::function<void(int width, int height)> set_client_size_callback) {
-  std::cout << "EqGfx::Initialize()" << std::endl;
+  Logger::Info("EqGfx::Initialize()");
   EqGfxInt::InitializeEqGfx(handle, init_fn, set_client_size_callback);
 }
 

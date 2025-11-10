@@ -39,6 +39,11 @@ general ones are read at boot time while the offsets are written and read while 
   - **Description:** Setting `TRUE` will disable the patch that implements a more
                      accurate timebase counter (high frequency cpu fix).
 
+- `DebugLogLevel`
+  - **Values:** `0` (default=None), `1` (Error) or `2` (Info)
+  - **Description:** Setting non-zero will enable the output of an `eqw_debug.txt` with
+                     logging messages from the code.
+
 ### `[EqwOffsets]`
 - `<width>by<height>X`
 - `<width>by<height>Y`

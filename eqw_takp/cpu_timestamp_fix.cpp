@@ -1,9 +1,8 @@
 #include "cpu_timestamp_fix.h"
 
-#include <iostream>
-
 #include "function_hook.h"
 #include "ini.h"
+#include "logger.h"
 
 // Optional high frequency cpu patch hooks.
 FunctionHook hook_GetTimebase_((LONGLONG(__cdecl *)())(nullptr));
@@ -33,8 +32,7 @@ LONGLONG __stdcall GetCpuSpeed2Hook() {
 
 // Optionally installs the hooks to fix the timebase.
 void CpuTimestampFix::Initialize(const std::filesystem::path &ini_file) {
-  bool disable = Ini::GetValue<bool>("EqwGeneral", "DisableCpuTimebaseFix", ini_file.string().c_str());
-  Ini::SetValue("EqwGeneral", "DisableCpuTimebaseFix", disable, ini_file.string().c_str());
+  bool disable = Ini::GetValue<bool>("EqwGeneral", "DisableCpuTimebaseFix", false, ini_file.string().c_str());
   if (disable) return;
 
   LARGE_INTEGER dummy;  // Perform an OS support check before hooking.
@@ -47,7 +45,7 @@ void CpuTimestampFix::Initialize(const std::filesystem::path &ini_file) {
 
   if (!get_speed_cpu2 || !get_speed_cpu3) return;  // Something is wrong, bail out.
 
-  std::cout << "Enabling CPU timebase fix." << std::endl;
+  Logger::Info("Enabling CPU timebase fix");
 
   // First install the hook in game.exe for the primary GetTimebase.
   hook_GetTimebase_.Initialize(0x00559bf4, GetTimebaseHook, FunctionHook::HookType::Detour);

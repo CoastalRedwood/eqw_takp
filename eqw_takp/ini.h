@@ -1,19 +1,19 @@
 #pragma once
 #include <Windows.h>
 
-#include <Vector>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 // Utility support functions to simplify reading and storing settings.
 
 namespace Ini {
 template <typename T>
-T ConvertFromString(const std::string& str) {
+T ConvertFromString(const std::string& str, const T& default_value) {
   if constexpr (std::is_same_v<T, bool>) {
     if (str == "TRUE")
       return true;
@@ -21,7 +21,7 @@ T ConvertFromString(const std::string& str) {
       return false;
   }
   std::istringstream iss(str);
-  T value;
+  T value = default_value;
   iss >> std::boolalpha >> value;
   return value;
 }
@@ -63,18 +63,17 @@ static inline bool DeleteSection(const std::string& sectionName, const char* fil
 }
 
 template <typename T>
-T GetValue(std::string section, std::string key, const char* filename) {
+T GetValue(std::string section, std::string key, const T& default_value, const char* filename) {
   char buffer[256];
   DWORD bytes_read = ::GetPrivateProfileStringA(section.c_str(), key.c_str(), "", buffer, sizeof(buffer), filename);
 
-  // Support defaulting to either false, "", or 0 if the ini entry doesn't exist.
+  // Write back the default and return it if the entry doesn't exist.
   if (bytes_read == 0) {
-    if constexpr (std::is_same_v<T, bool>) return false;
-    if constexpr (std::is_same_v<T, std::string>) return T{""};
-    return T{0};
+    SetValue<T>(section, key, default_value, filename);
+    return default_value;
   }
   if constexpr (std::is_same_v<T, std::string>) return buffer;
-  return ConvertFromString<T>(std::string(buffer));
+  return ConvertFromString<T>(std::string(buffer), default_value);
 }
 
 template <typename T>

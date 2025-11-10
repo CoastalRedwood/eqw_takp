@@ -1,8 +1,8 @@
 #include "vtable_hook.h"
 
-#include <iostream>
-#include <string>
 #include <unordered_map>
+
+#include "logger.h"
 
 // This global map stores the hooked pairs to support "double hooking" where a new
 // object is trying to repeat the hook in a shared table. This will happen if the
@@ -18,17 +18,17 @@ void* VTableHook::ReplaceVTableFunction(void** object_vtable, size_t index, LPVO
 
   new_function_ = new_function;
   if (object_vtable[index] == new_function_) {
-    if (debug) std::cout << "Vtable already pointing at your function!" << std::endl;
+    if (debug) Logger::Info("Vtable already pointing at your function!");
     if (vtable_hook_map.count(new_function_))
       original_function_ = vtable_hook_map[new_function_];
     else
-      std::cout << "Vtable Error: Invalid double-hooking!" << std::endl;
+      Logger::Error("Vtable Error: Invalid double-hooking!");
     return original_function_;
   }
 
   if (debug) {
-    std::cout << "Create vtable hook on: 0x" << std::hex << object_vtable << " index: " << index;
-    std::cout << " -> 0x" << object_vtable[index] << " to new function 0x" << new_function_ << std::dec << std::endl;
+    Logger::Info("Create vtable hook on: 0x%x index: %d -> 0x%x to new function 0x%x", (DWORD)object_vtable, index,
+                 (DWORD)object_vtable[index], (DWORD)new_function_);
   }
 
   original_function_ = object_vtable[index];

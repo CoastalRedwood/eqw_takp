@@ -2,8 +2,6 @@
 
 #include <windows.h>
 
-#include <iostream>
-
 #include "function_hook.h"
 
 namespace GameInputInt {

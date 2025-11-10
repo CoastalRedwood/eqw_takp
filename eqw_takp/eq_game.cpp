@@ -5,8 +5,6 @@
 #include <windows.h>
 
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 
 #include "cpu_timestamp_fix.h"
 #include "dinput_manager.h"
@@ -15,6 +13,7 @@
 #include "game_input.h"
 #include "iat_hook.h"
 #include "ini.h"
+#include "logger.h"
 #include "vtable_hook.h"
 
 // Using an EqGameInt namespace instead of a purely static class to reduce the qualifier clutter. The
@@ -28,7 +27,6 @@ static constexpr DWORD kWindowStyleNormal = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBO
 static constexpr DWORD kWindowStyleFullScreen = WS_POPUPWINDOW | WS_VISIBLE;
 
 // State and resources updated at initialization.
-std::ofstream debug_log_file_;    // Status updates are streamed here.
 std::filesystem::path exe_path_;  // Full path filename for eqgame.exe file.
 std::filesystem::path ini_path_;  // Full path filename for eqw.ini file.
 HWND hwnd_ = nullptr;             // Primary shared visible window handle.
@@ -52,8 +50,6 @@ bool isFocused_ = false;
 
 // Internal methods.
 
-LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 // Returns true if the primary EQ game object is allocated.
 bool IsGameInitialized() {
   return (*(void**)0x00809478 != nullptr);  // Created after login and destroyed before returning.
@@ -65,9 +61,11 @@ bool IsGameInGameState() {
   return eq && eq[0x5AC / 4] == 5;  // Check the game state stored in the EQ object.
 }
 
+LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 // Creates the common, shared window used by eqgame and eqmain.
 void CreateEqWindow() {
-  std::cout << "CreateEqWindow()" << std::endl;
+  Logger::Info("CreateEqWindow()");
 
   // Extract the first large and small icon
   HICON large_icons[1];
@@ -106,10 +104,8 @@ void CreateEqWindow() {
                           NULL, NULL);
   EqGfx::SetWindow(hwnd_);
 
-  full_screen_mode_ = Ini::GetValue<bool>("EqwGeneral", "FullScreenMode", ini_path_.string().c_str());
-  bool swap_mouse_buttons = Ini::GetValue<bool>("EqwGeneral", "SwapMouseButtons", ini_path_.string().c_str());
-  Ini::SetValue("EqwGeneral", "FullScreenMode", full_screen_mode_, ini_path_.string().c_str());
-  Ini::SetValue("EqwGeneral", "SwapMouseButtons", swap_mouse_buttons, ini_path_.string().c_str());
+  full_screen_mode_ = Ini::GetValue<bool>("EqwGeneral", "FullScreenMode", false, ini_path_.string().c_str());
+  bool swap_mouse_buttons = Ini::GetValue<bool>("EqwGeneral", "SwapMouseButtons", false, ini_path_.string().c_str());
   GameInput::Initialize(hwnd_, swap_mouse_buttons);  // Install mouse and keyboard handling hooks.
 }
 
@@ -117,8 +113,7 @@ void CreateEqWindow() {
 HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpWindowName, DWORD dwStyle, int X,
                                       int Y, int nWidth, int nHeight, HWND hWndParent, HMENU hMenu, HINSTANCE hInstance,
                                       LPVOID lpParam) {
-  std::cout << "EqGame: Create Window, ignoring size: " << X << " " << Y << " " << nWidth << " " << nHeight
-            << std::endl;
+  Logger::Info("EqGame: Create Window, ignoring size: x: %d, y: %d, W: %d, H: %d", X, Y, nWidth, nHeight);
   if (!hwnd_) CreateEqWindow();
 
   // It should now be safe to connect the client's wndproc handler. We could sniff this value with
@@ -131,7 +126,7 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
 void SetClientSize(int client_width, int client_height, bool center = false) {
   // Constrain the minimum sizes.
   if (client_width < kStartupHeight || client_height < kStartupWidth) {
-    std::cout << "Preventing small client size: " << client_width << " x " << client_height << std::endl;
+    Logger::Info("EqGame: Preventing small client size: %d x %d", client_width, client_height);
     client_width = max(client_width, kStartupWidth);
     client_height = max(client_height, kStartupHeight);
     center = true;
@@ -147,8 +142,8 @@ void SetClientSize(int client_width, int client_height, bool center = false) {
   bool full_screen =
       IsGameInitialized() && (full_screen_mode_ || ((client_width == full_width) && (client_height == full_height)));
 
-  std::cout << "EqGame: Full " << full_screen << " W " << full_width << " H " << full_height;
-  std::cout << " CW " << client_width << " CH " << client_height << std::endl;
+  Logger::Info("EqGame: Full %d W %d H %d CW %d CH %d", full_screen, full_width, full_height, client_width,
+               client_height);
 
   // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
   int width = full_screen ? full_width : client_width;
@@ -166,12 +161,11 @@ void SetClientSize(int client_width, int client_height, bool center = false) {
     x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
     y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
   } else {
-    std::stringstream ss;
-    ss << client_width << "by" << client_height;
-    x = Ini::GetValue<int>("EqwOffsets", ss.str() + "X", ini_path_.string().c_str());
-    y = Ini::GetValue<int>("EqWOffsets", ss.str() + "Y", ini_path_.string().c_str());
+    std::string resolution = std::to_string(client_width) + "by" + std::to_string(client_height);
+    x = Ini::GetValue<int>("EqwOffsets", resolution + "X", 0, ini_path_.string().c_str());
+    y = Ini::GetValue<int>("EqWOffsets", resolution + "Y", 0, ini_path_.string().c_str());
   }
-  std::cout << "EqGame: Set window position: " << x << " " << y << " " << width << " x " << height << std::endl;
+  Logger::Info("EqGame: Set window position: %d %d %d x %d", x, y, width, height);
 
   // Update the window style, size, and position.
   ::SetWindowLongA(hwnd_, GWL_STYLE, style);
@@ -194,20 +188,20 @@ HMODULE WINAPI Kernel32LoadLibraryAHook(LPCSTR lpLibFileName) {
 
 // Block the client from ever trying to capture the mouse.
 HWND WINAPI User32SetCaptureHook(HWND hWnd) {
-  std::cout << "EqGame: Blocking SetCapture" << std::endl;
+  Logger::Info("EqGame: Blocking SetCapture");
   GameInput::HandleGainOfFocus();  // Likely unnecessary but a convenient callback to reset inputs.
   return NULL;
 }
 
 // Block the game's disabling of the IDC_ARROW cursor (controlled by eqw).
 HCURSOR WINAPI User32SetCursorHook(HCURSOR hcursor) {
-  std::cout << "EqGame: Blocking SetCursor: " << (DWORD)hcursor << std::endl;
+  Logger::Info("EqGame: Blocking SetCursor: %d", (DWORD)hcursor);
   return hcursor;
 }
 
 // Disable the show cursor call to make the win32 cursor always visible (including title bar).
 int WINAPI User32ShowCursorHook(BOOL show) {
-  std::cout << "EqGame: Overriding ShowCursor to set it visible" << std::endl;
+  Logger::Info("EqGame: Overriding ShowCursor to set it visible");
   int count = ::ShowCursor(true);
   int target = 0;                                      // Make it precisely visible.
   while (count < target) count = ::ShowCursor(true);   // Count up to target.
@@ -217,7 +211,7 @@ int WINAPI User32ShowCursorHook(BOOL show) {
 
 // Replace the client supplied flags that request the window to be maximized.
 bool WINAPI User32ShowWindowHook(HWND wnd, DWORD flags) {
-  std::cout << "EqGame: ShowWindow with SW_SHOW." << std::endl;
+  Logger::Info("EqGame: ShowWindow with SW_SHOW");
   return hook_ShowWindow_.original(User32ShowWindowHook)(wnd, SW_SHOW);
 }
 
@@ -254,17 +248,19 @@ void StoreWindowOffsets() {
   int client_width = *reinterpret_cast<int*>(0x00798564);   // Game global screen x resolution.
   int client_height = *reinterpret_cast<int*>(0x00798568);  // Game global screen y resolution.
 
-  std::stringstream ss;
-  ss << client_width << "by" << client_height;
-  Ini::SetValue("EqwOffsets", ss.str() + "X", rect.left, ini_path_.string().c_str());
-  Ini::SetValue("EqwOffsets", ss.str() + "Y", rect.top, ini_path_.string().c_str());
+  // Update the ini if needed.
+  std::string resolution = std::to_string(client_width) + "by" + std::to_string(client_height);
+  int left = Ini::GetValue("EqwOffsets", resolution + "X", 0, ini_path_.string().c_str());
+  int top = Ini::GetValue("EqwOffsets", resolution + "Y", 0, ini_path_.string().c_str());
+  if (left != rect.left) Ini::SetValue("EqwOffsets", resolution + "X", rect.left, ini_path_.string().c_str());
+  if (top != rect.top) Ini::SetValue("EqwOffsets", resolution + "Y", rect.top, ini_path_.string().c_str());
 }
 
 // Toggles full screen mode.
 void SetFullScreenMode(bool enable) {
   bool change = (full_screen_mode_ != enable);
   full_screen_mode_ = enable;
-  std::cout << "Full screen mode set to: " << full_screen_mode_ << std::endl;
+  Logger::Info("EqGame: Full screen mode set to: %d", full_screen_mode_);
   if (!change) return;
 
   // This client size call will handle the full screen window style or maximizing flag as
@@ -284,7 +280,7 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     // Implement a hard close to kill the client process immediately.
     case WM_DESTROY:
     case WM_CLOSE:
-      std::cout << "EqGame: Terminating process" << std::endl;
+      Logger::Info("EqGame: Terminating process");
       ::TerminateProcess(::GetCurrentProcess(), 0);
       break;
 
@@ -340,15 +336,16 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
   return ::DefWindowProcA(hwnd, msg, wParam, lParam);
 }
 
-// Opens a debug log file and re-routes std::cout to it.
+// Opens a debug log file with the log level from settings.
 void InitializeDebugLog() {
-  debug_log_file_.open("eqw_debug.txt");
-  if (!debug_log_file_.is_open()) return;
+  int log_level = Ini::GetValue<int>("EqwGeneral", "DebugLogLevel", static_cast<int>(Logger::Level::None),
+                                     ini_path_.string().c_str());
+  std::filesystem::path log_file = exe_path_.parent_path() / "eqw_debug.txt";
+  Logger::Initialize(log_file.string().c_str(), static_cast<Logger::Level>(log_level));
 
-  std::cout.rdbuf(debug_log_file_.rdbuf());
-  std::cout << std::unitbuf;  // Ensure immediate flushing.
-
-  std::cout << "EQW debug log" << std::endl;
+  Logger::Info("EQW debug log (level = %d)", log_level);
+  Logger::Info("Exe path: %s", exe_path_.string().c_str());
+  Logger::Info("Ini path: %s", ini_path_.string().c_str());
 }
 
 // Extracts and stores the full path eqw.ini filename.
@@ -356,16 +353,14 @@ void InitializeIniFilename() {
   char buffer[FILENAME_MAX + 1];
   ::GetModuleFileNameA(NULL, buffer, FILENAME_MAX + 1);
   exe_path_ = std::filesystem::path(buffer);
-  std::cout << "Exe path: " << exe_path_.string() << std::endl;
   ini_path_ = exe_path_.parent_path() / "eqclient.ini";
-  std::cout << "ini path: " << ini_path_.string() << std::endl;
 }
 }  // namespace
 }  // namespace EqGameInt
 
 void EqGame::Initialize() {
-  EqGameInt::InitializeDebugLog();
   EqGameInt::InitializeIniFilename();
+  EqGameInt::InitializeDebugLog();
   EqGameInt::InstallHooks(GetModuleHandleA(NULL));
 }
 

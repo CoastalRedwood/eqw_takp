@@ -1,11 +1,9 @@
 #include "function_hook.h"
 
-#include <format>
-#include <iostream>
 #include <memory>
-#include <string>
 
 #include "instruction_length.h"
+#include "logger.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "psapi.lib")
@@ -81,7 +79,7 @@ void FunctionHook::patch_trampoline_relative_jumps() {
 
 // We FunctionHook everything at startup, so just use an obvious fatal error with the address to ID.
 void FunctionHook::fatal_error() {
-  std::cout << "Fatal hook wrapper patching: " << std::hex << patch_address_ << std::dec << std::endl;
+  Logger::Error("Fatal hook wrapper patching: 0x%x", patch_address_);
   throw std::bad_alloc();  // Will crash out the program.
 }
 

@@ -4,9 +4,8 @@
 #define INITGUID
 #include <dinput.h>
 
-#include <iostream>
-
 #include "iat_hook.h"
+#include "logger.h"
 #include "vtable_hook.h"
 
 // Using a DInput namespace instead of a purely static class to reduce the qualifier clutter. The
@@ -51,7 +50,7 @@ const char* GetDeviceStr(LPDIRECTINPUTDEVICE8W device) {
 
 // Block any client attempts to release the dinput device resources.
 HRESULT WINAPI DeviceReleaseHook(LPDIRECTINPUTDEVICE8W device) {
-  std::cout << "Blocking DInput " << GetDeviceStr(device) << " release request" << std::endl;
+  Logger::Info("Blocking DInput %s release request", GetDeviceStr(device));
   return DI_OK;
 }
 
@@ -81,11 +80,11 @@ HRESULT WINAPI DeviceAcquireHook(LPDIRECTINPUTDEVICE8W device) {
     result = hook_mouse_Acquire_.original(DeviceAcquireHook)(device);
 
   if (result == DI_OK) {  // Returns DI_OK if new acquire else S_FALSE if already acquired.
-    std::cout << "Acquired and flushing " << GetDeviceStr(device) << std::endl;
+    Logger::Info("Acquired and flushing %s", GetDeviceStr(device));
     DWORD items = INFINITE;  // Perform a flush of any stale data.
     DeviceGetDeviceDataHook(device, sizeof(DIDEVICEOBJECTDATA), NULL, &items, 0);
   } else if (result != S_FALSE && result != DIERR_OTHERAPPHASPRIO) {
-    std::cout << "Error acquiring " << GetDeviceStr(device) << ": " << result << std::endl;
+    Logger::Error("Error acquiring %s: %d", GetDeviceStr(device), result);
   }
 
   return result;
@@ -100,7 +99,7 @@ HRESULT WINAPI DeviceUnacquireHook(LPDIRECTINPUTDEVICE8W device) {
     result = hook_mouse_Unacquire_.original(DeviceUnacquireHook)(device);
 
   const char* effect = (result == DI_OK) ? "" : " (no effect)";
-  std::cout << "Unacquire " << GetDeviceStr(device) << effect << std::endl;
+  Logger::Info("Unacquire %s %s", GetDeviceStr(device), effect);
   return result;
 }
 
@@ -123,13 +122,13 @@ HRESULT WINAPI DeviceSetCooperativeLevelHook(LPDIRECTINPUTDEVICE8W device, HWND 
   flags = enable_background_mode_ ? DISCL_BACKGROUND : DISCL_FOREGROUND;
   flags |= DISCL_NONEXCLUSIVE;
 
-  std::cout << "DInput " << GetDeviceStr(device) << " coop level set to " << flags << std::endl;
+  Logger::Info("DInput %s coop level set to 0x%x", GetDeviceStr(device), flags);
   if (device == keyboard_)
     return hook_key_SetCooperativeLevel_.original(DeviceSetCooperativeLevelHook)(device, wnd, flags);
   else if (device == mouse_)
     return hook_mouse_SetCooperativeLevel_.original(DeviceSetCooperativeLevelHook)(device, wnd, flags);
 
-  std::cout << "Bad device in setcooperative levels" << std::endl;
+  Logger::Error("Bad device in set cooperative levels");
   return DIERR_NOTINITIALIZED;
 }
 
@@ -141,7 +140,7 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
                                    IsEqualGUID(guid, GUID_SysMouseEm2));
 
   if (!is_keyboard && !is_mouse) {
-    std::cout << "Unknown create device GUID" << std::endl;
+    Logger::Error("Unknown create device GUID");
     return DIERR_NOINTERFACE;
   }
 
@@ -149,7 +148,7 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
   auto target_string = is_keyboard ? "Keyboard" : "Mouse";
 
   if (*target_device) {
-    std::cout << "Dinput: Reusing " << target_string << std::endl;
+    Logger::Info("DInput: Reusing %s", target_string);
     *device = *target_device;
     return DI_OK;
   }
@@ -157,7 +156,7 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
   // We actually need to create a new device. Do that anad then hook it up.
   HRESULT result = hook_DInputCreateDevice_.original(DirectInputCreateDeviceHook)(ppvOut, guid, device, unk);
   if (result != DI_OK) {
-    std::cout << "Error: Failed to create " << target_string << " device: " << result << std::endl;
+    Logger::Error("Error: Failed to create %s device: %d", target_string, result);
     return result;
   }
 
@@ -166,7 +165,7 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
   // original table functions.
   *target_device = *device;
   void** vtable = *(void***)(*target_device);
-  std::cout << target_string << " VTABLE 0x" << std::hex << vtable << std::dec << std::endl;
+  Logger::Info("%s VTABLE 0x%x", target_string, (DWORD)vtable);
   if (is_keyboard) {
     hook_key_Release_ = VTableHook(vtable, 2, DeviceReleaseHook);
     hook_key_Acquire_ = VTableHook(vtable, 7, DeviceAcquireHook);
@@ -188,16 +187,16 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
 
 // Blocks any attempt by the client to release the DirectInput object.
 HRESULT WINAPI DirectInputReleaseHook(LPDIRECTINPUT8* ppvOut) {
-  std::cout << "Blocking DirectInput8 Release call" << std::endl;
+  Logger::Info("Blocking DirectInput8 Release call");
   return DI_OK;
 }
 
 // Maintains the singleton dinput object and installs the hooks for managing devices and its own lifecycle.
 HRESULT WINAPI DirectInputCreateHook(HINSTANCE hinst, DWORD dwVersion, REFIID riidltf, LPDIRECTINPUT8* ppvOut,
                                      LPDIRECTINPUT8 punkOuter) {
-  std::cout << "DirectInputCreateHook -- Version: 0x" << std::hex << dwVersion << std::dec << std::endl;
+  Logger::Info("DirectInputCreateHook -- Version: 0x%x", dwVersion);
   if (dinput_) {
-    std::cout << "Reusing dinput object" << std::endl;
+    Logger::Info("Reusing dinput object");
     *ppvOut = dinput_;
     return DI_OK;
   }
@@ -209,7 +208,7 @@ HRESULT WINAPI DirectInputCreateHook(HINSTANCE hinst, DWORD dwVersion, REFIID ri
     hook_DInputRelease_ = VTableHook(vtable, 2, DirectInputReleaseHook);
     hook_DInputCreateDevice_ = VTableHook(vtable, 3, DirectInputCreateDeviceHook);
   } else {
-    std::cout << "Dinput create error: " << result << std::endl;
+    Logger::Error("DInput create error: %d", result);
   }
   return result;
 }
@@ -226,7 +225,7 @@ void DInputManager::Initialize(HMODULE handle) {
 
 // Support enabling background mode during eqmain which will crash out if the acquire fails.
 void DInputManager::SetBackgroundMode(bool background_mode) {
-  std::cout << "DInput background mode: " << background_mode << std::endl;
+  Logger::Info("DInput background mode: %d", background_mode);
   DInput::enable_background_mode_ = background_mode;
 }
 

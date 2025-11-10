@@ -65,6 +65,7 @@
     <ClCompile Include="function_hook.cpp" />
     <ClCompile Include="game_input.cpp" />
     <ClCompile Include="iat_hook.cpp" />
+    <ClCompile Include="logger.cpp" />
     <ClCompile Include="vtable_hook.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -78,6 +79,7 @@
     <ClInclude Include="iat_hook.h" />
     <ClInclude Include="ini.h" />
     <ClInclude Include="instruction_length.h" />
+    <ClInclude Include="logger.h" />
     <ClInclude Include="vtable_hook.h" />
   </ItemGroup>
   <ItemGroup>
