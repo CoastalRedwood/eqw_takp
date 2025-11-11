@@ -2,6 +2,11 @@ name: Create manual release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version_tag:
+        description: 'Unique release version (generates tag)'
+        required: true
+        type: string
 
 jobs:
   build:
@@ -16,10 +21,12 @@ jobs:
 
       - name: Build
         run: |
-          msbuild eqw_takp.sln /p:Configuration=Release /p:Platform=x86
+          msbuild eqw_takp.sln /p:Configuration=Release /p:Platform=x86 /p:LanguageStandard=stdcpp20
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Create the github release tag and upload artifacts
+        uses: ncipollo/release-action@v1
         with:
-          name: eqw.dll
-          path: './Release/eqw.dll'
+          artifacts: "./Release/eqw.dll"
+          artifactErrorsFailBuild: true
+          commit: ${{ github.sha }}
+          tag: ${{ github.event.inputs.release_version_tag }}
