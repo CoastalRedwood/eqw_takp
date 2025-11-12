@@ -130,7 +130,7 @@ HRESULT CreatePrimarySurface(IDirectDraw* lplpDD) {
   return result;
 }
 
-/// Create a backbuffer to ensure GetAttachedSurface() doesn't fail.
+// Create a backbuffer to ensure GetAttachedSurface() doesn't fail.
 HRESULT CreateSecondarySurface(IDirectDraw* lplpDD) {
   DDSURFACEDESC surface_desc;
   ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));

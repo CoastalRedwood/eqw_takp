@@ -12,5 +12,5 @@ int GetEnableFullScreen();
 void SetEnableFullScreen(int enable);
 void SetEqMainInitFn(void(__cdecl* init_fn)());
 void SetEqGfxInitFn(void(__cdecl* init_fn)());
-
+void SetEqCreateWinInitFn(void(__cdecl* init_fn)());
 }  // namespace EqGame

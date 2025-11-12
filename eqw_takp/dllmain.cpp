@@ -39,8 +39,15 @@ extern "C" void __stdcall SetEqMainInitFn(void(__cdecl* init_fn)()) {
 }
 
 // Sets a callback to execute immediately after the eqgfx_dx8.dll is loaded into memory.
+// This happens before the primary game window is created (SetEqCreateWinInitFn).
 extern "C" void __stdcall SetEqGfxInitFn(void(__cdecl* init_fn)()) {
   EqGame::SetEqGfxInitFn(init_fn);  // Called after eqw does it's hooks.
+}
+
+// Sets a callback to execute immediately after eqw creates the primary game window but
+// before the hook has returned to the game code and populated the global window handle.
+extern "C" void __stdcall SetEqCreateWinInitFn(void(__cdecl* init_fn)()) {
+  EqGame::SetEqCreateWinInitFn(init_fn);  // Use GetGameWindow() if a handle is needed.
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {

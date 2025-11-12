@@ -34,6 +34,7 @@ HICON hicon_large_ = nullptr;     // Icons retrieved from the executable.
 HICON hicon_small_ = nullptr;     // Icons retrieved from the executable.
 void(__cdecl* eqmain_init_fn_)() = nullptr;
 void(__cdecl* eqgfx_init_fn_)() = nullptr;
+void(__cdecl* eqcreatewin_init_fn_)() = nullptr;
 
 // Hooks to enable hooking the other libraries and supporting windowed mode.
 IATHook hook_LoadLibrary_;
@@ -107,6 +108,11 @@ void CreateEqWindow() {
   full_screen_mode_ = Ini::GetValue<bool>("EqwGeneral", "FullScreenMode", false, ini_path_.string().c_str());
   bool swap_mouse_buttons = Ini::GetValue<bool>("EqwGeneral", "SwapMouseButtons", false, ini_path_.string().c_str());
   GameInput::Initialize(hwnd_, swap_mouse_buttons);  // Install mouse and keyboard handling hooks.
+
+  if (eqcreatewin_init_fn_) {
+    Logger::Info("CreateEqWindow: Executing external init callback");
+    eqcreatewin_init_fn_();  // Execute registered callback if provided with one.
+  }
 }
 
 // The game client creates a window with the flags set to topmost maximize it, which we ignore.
@@ -385,3 +391,5 @@ void EqGame::SetEnableFullScreen(int enable) {
 void EqGame::SetEqMainInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqmain_init_fn_ = init_fn; }
 
 void EqGame::SetEqGfxInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqgfx_init_fn_ = init_fn; }
+
+void EqGame::SetEqCreateWinInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqcreatewin_init_fn_ = init_fn; }
