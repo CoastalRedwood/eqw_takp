@@ -24,7 +24,7 @@ static constexpr int kStartupWidth = 640;  // Default eqmain size.
 static constexpr int kStartupHeight = 480;
 static constexpr DWORD kWindowExStyle = 0;  // No flags.
 static constexpr DWORD kWindowStyleNormal = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME;
-static constexpr DWORD kWindowStyleFullScreen = WS_POPUPWINDOW | WS_VISIBLE;
+static constexpr DWORD kWindowStyleFullScreen = WS_POPUP | WS_VISIBLE;
 
 // State and resources updated at initialization.
 std::filesystem::path exe_path_;  // Full path filename for eqgame.exe file.
@@ -150,14 +150,17 @@ void SetClientSize(int client_width, int client_height, bool center = false) {
   int height = full_screen ? full_height : client_height;
   DWORD style = full_screen ? kWindowStyleFullScreen : kWindowStyleNormal;
   DWORD ex_style = kWindowExStyle;
-  RECT desiredRect = {0, 0, width, height};
-  AdjustWindowRectEx(&desiredRect, style, FALSE, ex_style);
-  width = desiredRect.right - desiredRect.left;
-  height = desiredRect.bottom - desiredRect.top;
+  RECT adjusted_rect = full_screen ? rect : RECT(0, 0, width, height);
+  AdjustWindowRectEx(&adjusted_rect, style, FALSE, ex_style);
+  width = adjusted_rect.right - adjusted_rect.left;
+  height = adjusted_rect.bottom - adjusted_rect.top;
 
   int x = 0;
   int y = 0;
-  if (full_screen || center) {
+  if (full_screen) {
+    x = adjusted_rect.left;  // Should be same as rect.left with WS_POPUP style.
+    y = adjusted_rect.top;
+  } else if (center) {
     x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
     y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
   } else {
