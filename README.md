@@ -24,7 +24,7 @@
   - Copy the eqw.dll to your client game directory
   - Install (copy over) a compatible (updated) eqgame.dll file
   - Review the Settings section below if any desire to modify defaults
-    - Run once so they populate defaults to modify
+    - First run the game once to populate defaults and then modify
   - See compatibility notes below for dgvoodoo or d3d8tod9
 
 ## Settings
@@ -66,31 +66,40 @@ general ones are read at boot time while the offsets are written and read while 
  - The `[VideoMode]: RefreshRate` value is ignored
  - The `[VideoMode]: BitsPerPixel` value should be set to `32` (others are untested)
 
+## Unsupported legacy EqW 2.32 features
+- Since this always runs in windowed mode, the gamma fix feature of legacy eqw 2.32 was dropped
+  - Check your updated eqgame.dll for gamma customization support
+- No hotkeys are supported (ReleaseMouse, ReloadIni, EQWSwitch)
 
-## Testing and Known issues
+## Direct3D8 support
 
-The eqgame.dll is a dummy placeholder for testing.
+Depending on your system, GPU, drivers, etc. you will most likely need a Direct3D 8 wrapper.
+These are mods that work by placing a d3d8.dll file into the game directory. Don't install
+these in the system directories. Try it without any d3d8.dll file first to see if that works
+for you. You may get drastically better or worse performance with or without a D3D8 mod
+and it's worth playing around with these even if seems to be working already.
 
-Initial testing performed using either dgvoodoo or [d38to9](https://github.com/crosire/d3d8to9).
-See issues list below.
- 
-### Stability and compatibility
+## Testing
+
+Initial testing was performed using either dgvoodoo or [d38to9](https://github.com/crosire/d3d8to9).
+
+Only 32-bit video modes were tested.
+
+## Known issues
+
+### Features / polishing
+- Transition glitches
+   - Some dirty screens are briefly flashed to/from char select
+
+### HW compatibility (comments will be system dependent)
  - d3d8to9 d3d8.dll:
    - NVidia fps limiter is not functional (Zeal version works fine)
    - Loading screen progress bar and text are not updating
    - The presence of the dgvoodoo ddraw.dll results in a black game screen
- - intel gpu w/out d3d8.dll: black screen (but game is running in background with sounds and ui)
+ - intel gpu w/out d3d8.dll:
+   - black screen (but game is running in background with sounds and ui)
  - dgvoodoo:
    - Crashes char select -> login w/out ever entering world (dx 6.0 error dialog, same as old eqw)
    - It is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)
    - Without dgvoodoo ddraw.dll it hangs with a black screen trying to go back into eqmain
 
-### Features / polishing
-- Since this always runs in windowed mode, the gamma fix feature of legacy eqw 2.32 was dropped
-- Transition glitches
-   - Some dirty screens are briefly flashed to/from char select
-
-### OTHER:
- - Zeal breakage (to fix in 1.3 update):
-   - Zeal cam left pan not working due to broken get_game_window()
-   - Zone map external map window is severely broken
