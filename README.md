@@ -23,6 +23,7 @@
 ## Installation
   - Copy the eqw.dll to your client game directory
   - Install (copy over) a compatible (updated) eqgame.dll file
+  - If using Zeal a version newer than 1.3.0-beta2 is required for lmb panning to function
   - Review the Settings section below if any desire to modify defaults
     - First run the game once to populate defaults and then modify
   - See compatibility notes below for dgvoodoo or d3d8tod9
