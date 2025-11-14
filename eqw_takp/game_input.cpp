@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "function_hook.h"
+#include "logger.h"
 
 namespace GameInputInt {
 namespace {
@@ -51,24 +52,40 @@ BYTE* const g_mouse_new_ui = (BYTE*)0x008092d8;
 
 // Keyboard support functions.
 
+// Partial layout of the new UI's CXWndManager class which has its own internal key state.
+struct CXWndManager {
+  /*0x000*/ BYTE misc_0x000[0x54];
+  /*0x054*/ BYTE caps_lock_state;  // Toggles
+  /*0x055*/ BYTE shift_down;       // Updates from left or right shift updates state.
+  /*0x056*/ BYTE ctrl_down;        // Updates from left or right ctrl updates state.
+  /*0x057*/ BYTE left_alt_down;    // Left alt only.
+  /*0x058*/ BYTE right_alt_down;   // Right alt only.
+  /*0x059*/ BYTE unknown_0x059[3];
+  /*0x05c*/ DWORD input_state;  // Set to 0x14 when there's a non-modifier key pressed. Ignores keys if not 0 or 0x14.
+};
+
+CXWndManager** const g_ptr_xwnd_manager = (CXWndManager**)0x00809DB4;
+
 bool IsCtrlPressed() { return *(DWORD*)0x00809320 > 0; }
 
 void SetCtrlKeyState(bool down) {
   *(DWORD*)0x0079973C = down;
   *(DWORD*)0x00809320 = down;
-  DWORD ptr = *(DWORD*)0x00809DB4;
-  if (ptr) *(BYTE*)(ptr + 86) = down;
+  auto xwnd_manager = *g_ptr_xwnd_manager;
+  if (xwnd_manager) xwnd_manager->ctrl_down = down;
+
+  if (down) Logger::Info("Ctrl key set to down");  // Temporary after a report of a hidden stuck key.
 }
 
 bool IsAltPressed() { return *(DWORD*)0x0080932C > 0; }
 
-void SetAltKeyState(bool down) {
-  *(DWORD*)0x00799740 = down;
-  *(DWORD*)0x0080932C = down;
-  DWORD ptr = *(DWORD*)0x00809DB4;
-  if (ptr) {
-    *(BYTE*)(ptr + 87) = down;  // Left Alt
-    *(BYTE*)(ptr + 88) = 0;     // Right Alt
+void SetAltKeyState(bool left_down, bool right_down) {
+  *(DWORD*)0x00799740 = left_down ? 1 : (right_down ? 2 : 0);  // 1 = left, 2 = right.
+  *(DWORD*)0x0080932C = left_down ? 1 : (right_down ? 2 : 0);
+  auto xwnd_manager = *g_ptr_xwnd_manager;
+  if (xwnd_manager) {
+    xwnd_manager->left_alt_down = left_down || right_down;
+    xwnd_manager->right_alt_down = false;  // The right alt is remapped to left.
   }
 }
 
@@ -77,22 +94,28 @@ bool IsShiftPressed() { return *(DWORD*)0x0080931C > 0; }
 void SetShiftKeyState(bool down) {
   *(DWORD*)0x00799738 = down;
   *(DWORD*)0x0080931C = down;
-  DWORD ptr = *(DWORD*)0x00809DB4;
-  if (ptr) *(BYTE*)(ptr + 85) = down;
+  auto xwnd_manager = *g_ptr_xwnd_manager;
+  if (xwnd_manager) xwnd_manager->shift_down = down;
 }
 
-void SetCapsLockState(bool down) {
-  *(DWORD*)0x00809324 = down;
-  DWORD ptr = *(DWORD*)0x00809DB4;
-  if (ptr) *(BYTE*)(ptr + 84) = down;
+void SetCapsLockState(bool state) {
+  *(DWORD*)0x00809324 = state;  // Code toggles state.
+  auto xwnd_manager = *g_ptr_xwnd_manager;
+  if (xwnd_manager) xwnd_manager->caps_lock_state = state;
+}
+
+void SetNumLockState(bool state) {
+  *(DWORD*)0x00809328 = state;  // NumLock just has a single global that toggles.
 }
 
 void UpdateModifierKeyStates() {
   bool in_foreground = (GetForegroundWindow() == hwnd_);
-  SetAltKeyState(in_foreground && (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
-  SetCtrlKeyState(in_foreground && (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
-  SetShiftKeyState(in_foreground && (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
-  SetCapsLockState(in_foreground && (GetAsyncKeyState(VK_CAPITAL) & 0x8000) != 0);
+  SetAltKeyState(in_foreground && (::GetAsyncKeyState(VK_LMENU) & 0x8000) != 0,
+                 in_foreground && (::GetAsyncKeyState(VK_RMENU) & 0x8000) != 0);
+  SetCtrlKeyState(in_foreground && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
+  SetShiftKeyState(in_foreground && (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+  SetCapsLockState(in_foreground && (::GetAsyncKeyState(VK_CAPITAL) & 0x8000) != 0);
+  SetNumLockState(in_foreground && (::GetAsyncKeyState(VK_NUMLOCK) & 0x8000) != 0);
 }
 
 void ResetKeyboardState(bool perform_update_query) {
@@ -102,11 +125,15 @@ void ResetKeyboardState(bool perform_update_query) {
   const int kNumKeyStates = 0x100;
   memset(reinterpret_cast<void*>(0x007ce04c), 0, kNumKeyStates * sizeof(int));
 
-  SetAltKeyState(false);
+  SetAltKeyState(false, false);
   SetCtrlKeyState(false);
   SetShiftKeyState(false);
   SetCapsLockState(false);
-  *(DWORD*)0x00809328 = 0;  // Num lock state
+  SetNumLockState(false);
+
+  // Also null out any active keydown state.
+  auto xwnd_manager = *g_ptr_xwnd_manager;
+  if (xwnd_manager && xwnd_manager->input_state == 0x14) xwnd_manager->input_state = 0;
 
   if (perform_update_query) UpdateModifierKeyStates();
 }
@@ -124,13 +151,19 @@ void SetGameMousePosition(int x, int y) {
 // Resets the internal mouse state and makes the internal cursor invisible.
 void ResetMouseUpdateValues(bool full_reset = true) {
   // CXWndManager can get into a broken state if the mouse up doesn't trigger properly (like
-  // left click dragging a window off the screen edge), so this should be called with
-  // full_reset set to false in the first loop.
+  // left click dragging a window off the screen edge), so we want to make sure the game
+  // has a chance to process the mouse button up signals. The full_reset flag can force
+  // a full reset and hiding the cursor immediately if the game loop isn't running.
+
+  // Only reset the self-clearing previous state if the full_reset flag is set.
   if (full_reset) {
-    SetGameMousePosition(32767, 32767);  // Off-screen so invisible and can't 'misclick' on something.
     *g_mouse_lmb_down_previous = 0;
     *g_mouse_rmb_down_previous = 0;
   }
+
+  // Delay hiding / relocating the mouse until the previous states have been cleared.
+  if (!*g_mouse_lmb_down_previous && !*g_mouse_rmb_down_previous)
+    SetGameMousePosition(32767, 32767);  // Off-screen so invisible and can't 'misclick' on something.
 
   *g_mouse_rmb_down_mouse_look = 0;  // Disable all other dinput related outputs and state.
   *g_mouse_rmb_down_from_dinput = 0;
@@ -240,9 +273,8 @@ int __cdecl GetMouseDataRelHook() {
   }
 
   if (!internal_mode) {
-    bool full_reset = mouse_disabled;  // For the first loop do not move mouse off screen.
     mouse_disabled = true;
-    ResetMouseUpdateValues(full_reset);  // Drains the buffers and moves the cursor off screen.
+    ResetMouseUpdateValues(false);  // Drains the buffers and moves the cursor off screen.
     return 0;
   }
 

@@ -80,14 +80,14 @@ void CreateEqWindow() {
   WNDCLASSA wc = {};
   wc.lpfnWndProc = GameWndProc;  // Custom handler to intercept messages.
   wc.hIcon = hicon_small_;
-  wc.hInstance = GetModuleHandleA(NULL);
+  wc.hInstance = ::GetModuleHandleA(NULL);
   wc.hCursor = ::LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
   wc.lpszClassName = "_EqWwndclass";
   wc.style = CS_HREDRAW | CS_VREDRAW;
-  wc.hbrBackground = CreateSolidBrush(RGB(0, 0, 0));  // Black background.
-  if (RegisterClassA(&wc) == 0) {
+  wc.hbrBackground = ::CreateSolidBrush(RGB(0, 0, 0));  // Black background.
+  if (::RegisterClassA(&wc) == 0) {
     // Handle registration failure
-    MessageBoxA(NULL, "Window class registration failed!", "Error", MB_OK | MB_ICONERROR);
+    ::MessageBoxA(NULL, "Window class registration failed!", "Error", MB_OK | MB_ICONERROR);
     return;
   }
 
@@ -95,14 +95,14 @@ void CreateEqWindow() {
   RECT rect = {0, 0, 640, 480};        // Client area size
   DWORD dwexstyle = kWindowExStyle;    // Fixed (no) flags.
   DWORD dwstyle = kWindowStyleNormal;  // Used by eqmain.
-  AdjustWindowRectEx(&rect, dwstyle, FALSE, 0);
+  ::AdjustWindowRectEx(&rect, dwstyle, FALSE, 0);
   int win_width = rect.right - rect.left;
   int win_height = rect.bottom - rect.top;
-  int x = (GetSystemMetrics(SM_CXSCREEN) - win_width) / 2;
-  int y = (GetSystemMetrics(SM_CYSCREEN) - win_height) / 2;
+  int x = (::GetSystemMetrics(SM_CXSCREEN) - win_width) / 2;
+  int y = (::GetSystemMetrics(SM_CYSCREEN) - win_height) / 2;
 
-  hwnd_ = CreateWindowExA(dwexstyle, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width, win_height, NULL, NULL,
-                          NULL, NULL);
+  hwnd_ = ::CreateWindowExA(dwexstyle, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width, win_height, NULL, NULL,
+                            NULL, NULL);
   EqGfx::SetWindow(hwnd_);
 
   full_screen_mode_ = Ini::GetValue<bool>("EqwGeneral", "FullScreenMode", false, ini_path_.string().c_str());
@@ -157,7 +157,7 @@ void SetClientSize(int client_width, int client_height, bool center = false) {
   DWORD style = full_screen ? kWindowStyleFullScreen : kWindowStyleNormal;
   DWORD ex_style = kWindowExStyle;
   RECT adjusted_rect = full_screen ? rect : RECT(0, 0, width, height);
-  AdjustWindowRectEx(&adjusted_rect, style, FALSE, ex_style);
+  ::AdjustWindowRectEx(&adjusted_rect, style, FALSE, ex_style);
   width = adjusted_rect.right - adjusted_rect.left;
   height = adjusted_rect.bottom - adjusted_rect.top;
 
@@ -167,8 +167,8 @@ void SetClientSize(int client_width, int client_height, bool center = false) {
     x = adjusted_rect.left;  // Should be same as rect.left with WS_POPUP style.
     y = adjusted_rect.top;
   } else if (center) {
-    x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
-    y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
+    x = (::GetSystemMetrics(SM_CXSCREEN) - width) / 2;
+    y = (::GetSystemMetrics(SM_CYSCREEN) - height) / 2;
   } else {
     std::string resolution = std::to_string(client_width) + "by" + std::to_string(client_height);
     x = Ini::GetValue<int>("EqwOffsets", resolution + "X", 0, ini_path_.string().c_str());
@@ -240,12 +240,12 @@ void PaintIcon(HWND hwnd) {
   if (!hicon_large_) return;
 
   PAINTSTRUCT ps;
-  HDC hdc = BeginPaint(hwnd, &ps);
+  HDC hdc = ::BeginPaint(hwnd, &ps);
   int size = 128;
   int left = (kStartupWidth - size) / 2;
   int top = (kStartupHeight - size) / 2;
-  DrawIconEx(hdc, left, top, hicon_large_, size, size, 0, 0, DI_NORMAL);
-  EndPaint(hwnd, &ps);
+  ::DrawIconEx(hdc, left, top, hicon_large_, size, size, 0, 0, DI_NORMAL);
+  ::EndPaint(hwnd, &ps);
 }
 
 // Updates the stored window offsets for the active window.
@@ -315,8 +315,8 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
       break;
 
     case WM_PAINT:
-      if (IsGameInitialized()) {      // Check if the primary game object is allocated.
-        ValidateRect(hwnd, nullptr);  // Removes entire client area from the update region.
+      if (IsGameInitialized()) {        // Check if the primary game object is allocated.
+        ::ValidateRect(hwnd, nullptr);  // Removes entire client area from the update region.
       } else {
         PaintIcon(hwnd);
       }
@@ -385,7 +385,7 @@ void EqGame::SetEnableFullScreen(int enable) {
   // Note this is a cross-threading call (eq game processingi thread is spun off
   // from the main thread with the wndproc) so it will block until that thread
   // processes the message in the queue.
-  SendMessageA(EqGameInt::hwnd_, WM_USER, enable, 0);
+  ::SendMessageA(EqGameInt::hwnd_, WM_USER, enable, 0);
 }
 
 void EqGame::SetEqMainInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqmain_init_fn_ = init_fn; }
