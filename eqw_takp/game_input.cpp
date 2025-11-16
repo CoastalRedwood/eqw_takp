@@ -41,12 +41,11 @@ long* const g_mouse_y_abs_from_dinput = (long*)0x008092ec;
 short* const g_mouse_x_delta_from_dinput = (short*)0x008092f0;
 short* const g_mouse_y_delta_from_dinput = (short*)0x008092f4;
 
-long* const g_mouse_screen_mode = (long*)0x0063b918;
-short* const g_mouse_screen_rect_left = (short*)0x00798548;
+short* const g_mouse_screen_rect_left = (short*)0x00798548;  // Viewport rectangle.
 short* const g_mouse_screen_rect_top = (short*)0x0079854a;
 short* const g_mouse_screen_rect_right = (short*)0x0079854c;
 short* const g_mouse_screen_rect_bottom = (short*)0x0079854e;
-long* const g_mouse_screen_res_x = (long*)0x00798564;
+long* const g_mouse_screen_res_x = (long*)0x00798564;  // Full window resolution.
 long* const g_mouse_screen_res_y = (long*)0x00798568;
 BYTE* const g_mouse_new_ui = (BYTE*)0x008092d8;
 
@@ -73,8 +72,6 @@ void SetCtrlKeyState(bool down) {
   *(DWORD*)0x00809320 = down;
   auto xwnd_manager = *g_ptr_xwnd_manager;
   if (xwnd_manager) xwnd_manager->ctrl_down = down;
-
-  if (down) Logger::Info("Ctrl key set to down");  // Temporary after a report of a hidden stuck key.
 }
 
 bool IsAltPressed() { return *(DWORD*)0x0080932C > 0; }
@@ -108,12 +105,27 @@ void SetNumLockState(bool state) {
   *(DWORD*)0x00809328 = state;  // NumLock just has a single global that toggles.
 }
 
+// Brute force scan of all virtual key codes counting the number of them pressed down.
+int GetNumberOfKeysDown() {
+  int key_down_count = 0;
+  for (int i = 1; i < 256; ++i) {  // Start at 1 since 0 = NONE.
+    if (::GetAsyncKeyState(i) & 0x8000) key_down_count++;
+  }
+  return key_down_count;
+}
+
 void UpdateModifierKeyStates() {
   bool in_foreground = (GetForegroundWindow() == hwnd_);
-  SetAltKeyState(in_foreground && (::GetAsyncKeyState(VK_LMENU) & 0x8000) != 0,
-                 in_foreground && (::GetAsyncKeyState(VK_RMENU) & 0x8000) != 0);
-  SetCtrlKeyState(in_foreground && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
-  SetShiftKeyState(in_foreground && (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+  // After the keyboard is reacquired (w/ or w/out the flush in dinput_manager), it only
+  // reports the key down and then paired key up of the last key pressed before regaining
+  // focus. This can cause stuck state for the modifiers, so don't synchronize any of them
+  // if more than one key is down.
+  if (GetNumberOfKeysDown() == 1) {
+    SetAltKeyState(in_foreground && (::GetAsyncKeyState(VK_LMENU) & 0x8000) != 0,
+                   in_foreground && (::GetAsyncKeyState(VK_RMENU) & 0x8000) != 0);
+    SetCtrlKeyState(in_foreground && (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
+    SetShiftKeyState(in_foreground && (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+  }
   SetCapsLockState(in_foreground && (::GetAsyncKeyState(VK_CAPITAL) & 0x8000) != 0);
   SetNumLockState(in_foreground && (::GetAsyncKeyState(VK_NUMLOCK) & 0x8000) != 0);
 }
@@ -184,11 +196,8 @@ void UpdateGameWindowParameters() {
     game_rect_.bottom = rect.bottom + offset.y;
   }
 
-  bool mode = (*g_mouse_screen_mode == 1);  // Logic copied from SetMouseCenter.
-  game_width_ = mode ? *g_mouse_screen_res_x : (*g_mouse_screen_rect_left + *g_mouse_screen_rect_right);
-  game_height_ = mode ? *g_mouse_screen_res_y : (*g_mouse_screen_rect_top + *g_mouse_screen_rect_bottom);
-  game_width_ = max(game_width_, 640);  // Ensure always non-zero.
-  game_height_ = max(game_height_, 480);
+  game_width_ = max(*g_mouse_screen_res_x, 640);  // Ensure always non-zero.
+  game_height_ = max(*g_mouse_screen_res_y, 480);
 }
 
 // DirectX will scale the game resolution to fit the screen (full scale expansion or height compression).
@@ -228,7 +237,7 @@ void SetBothCursorsToClientPosition(POINT pt) {
   SetWin32CursorToClientPosition(pt);
 }
 
-// Sets the internal cursor location to the middle of the screen.
+// Sets the internal cursor location to the middle of the screen (ignores viewport / offset).
 void SetWin32CursorToCenter() {
   POINT center = {game_width_ / 2, game_height_ / 2};
   SetWin32CursorToClientPosition(center);
@@ -269,7 +278,7 @@ int __cdecl GetMouseDataRelHook() {
 
   if (prev_has_focus != has_focus) {
     prev_has_focus = has_focus;
-    ResetKeyboardState(has_focus);
+    ResetKeyboardState(has_focus);  // Update modifiers here so initial mouse click works.
   }
 
   if (!internal_mode) {

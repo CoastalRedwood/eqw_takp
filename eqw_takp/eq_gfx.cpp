@@ -29,26 +29,36 @@ VTableHook hook_CreateDevice_;
 VTableHook hook_Reset_;
 
 IDirect3DDevice8* device_;
-D3DPRESENT_PARAMETERS present_;
 
 // Internal methods
 
 // The reset hook is used to override the game and remain in windowed mode as well as perform
 // the callback to inform the eqw windowing system when the resolution is changing.
 HRESULT WINAPI D3DDeviceResetHook(IDirect3DDevice8* Device, D3DPRESENT_PARAMETERS* Parameters) {
-  // EqW overrides the presentation parameters to alway remain in windowed mode. The outer code
+  // EqW overrides the presentation parameters to always remain in windowed mode. The outer code
   // logic in eqgame will toggle window styles as needed.
+
+  Logger::Info("EqGFX: Reset: %d x %d", Parameters->BackBufferWidth, Parameters->BackBufferHeight);
+
+  // Per the Nvidia "DX8_Overview.pdf", the fields below must be zero in windowed mode. It seems to work fine with
+  // the BackBufferWidth and BackBufferHeight set to non-zero with the set_client_size_cb_() happening immediately
+  // afterwards, and when the order was swapped with the client size callback before the original() call the
+  // full screen mode was confused, so left it like this.
+
   if (!Parameters->Windowed) {
+    Parameters->hDeviceWindow = hwnd_;  // Make this explicit.
     Parameters->Windowed = true;
     Parameters->FullScreen_PresentationInterval = 0;
     Parameters->FullScreen_RefreshRateInHz = 0;
+    // Parameters->BackBufferWidth = 0;
+    // Parameters->BackBufferHeight = 0;
   }
   HRESULT result = EqGfxInt::hook_Reset_.original(D3DDeviceResetHook)(Device, Parameters);
-  if (SUCCEEDED(result)) {
-    Logger::Info("EqGFX: Reset: %d x %d", Parameters->BackBufferWidth, Parameters->BackBufferHeight);
+  if (SUCCEEDED(result))
     set_client_size_cb_(Parameters->BackBufferWidth, Parameters->BackBufferHeight);
-    // SetEqMainSurfaceResolution(Parameters->BackBufferWidth, Parameters->BackBufferHeight);
-  }
+  else
+    Logger::Error("EqGFX: Reset failure: 0x%08x", result);
+
   return result;
 }
 
@@ -62,20 +72,30 @@ HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE D
                                                              pPresentationParameters, ppReturnedDeviceInterface);
   }
 
-  Logger::Info("EqGfx: Create device with format %d", present_.BackBufferFormat);
-  pPresentationParameters->Windowed = true;
-  pPresentationParameters->hDeviceWindow = hwnd_;
-  Logger::Info("Create device hook %d", present_.BackBufferFormat);
+  Logger::Info("EqGFX: Create device: %d x %d", pPresentationParameters->BackBufferWidth,
+               pPresentationParameters->BackBufferHeight);
+
+  // See Reset for comments on these fields in windowed mode.
+  if (!pPresentationParameters->Windowed) {
+    pPresentationParameters->hDeviceWindow = hwnd_;  // Make this explicit.
+    pPresentationParameters->Windowed = true;
+    pPresentationParameters->FullScreen_PresentationInterval = 0;
+    pPresentationParameters->FullScreen_RefreshRateInHz = 0;
+    // pPresentationParameters->BackBufferWidth = 0;
+    // pPresentationParameters->BackBufferHeight = 0;
+  }
+
   HRESULT result = hook_CreateDevice_.original(D3D8CreateDeviceHook)(
       pD3D, Adapter, DeviceType, hwnd_, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
-  present_ = *pPresentationParameters;
   if (SUCCEEDED(result)) {
-    Logger::Info("EqGFX: D3D8CreateDeviceHook: %d x %d", present_.BackBufferWidth, present_.BackBufferHeight);
+    Logger::Info("EqGFX: Installing D3D8CreateDeviceHook");
     void** vtable = *(void***)*ppReturnedDeviceInterface;
     hook_Reset_ = VTableHook(vtable, 14, D3DDeviceResetHook, false);
-    set_client_size_cb_(present_.BackBufferWidth, present_.BackBufferHeight);
+    set_client_size_cb_(pPresentationParameters->BackBufferWidth, pPresentationParameters->BackBufferHeight);
 
     device_ = *ppReturnedDeviceInterface;
+  } else {
+    Logger::Error("EqGFX: Create device failure: 0x%08x", result);
   }
   return result;
 }
