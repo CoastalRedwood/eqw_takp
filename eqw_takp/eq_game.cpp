@@ -22,6 +22,7 @@ namespace EqGameInt {
 namespace {
 static constexpr int kStartupWidth = 640;  // Default eqmain size.
 static constexpr int kStartupHeight = 480;
+static constexpr char kIniLoginOffset[] = "Login";
 static constexpr DWORD kWindowExStyle = 0;  // No flags.
 static constexpr DWORD kWindowStyleNormal = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME;
 static constexpr DWORD kWindowStyleFullScreen = WS_POPUP | WS_VISIBLE;
@@ -92,14 +93,16 @@ void CreateEqWindow() {
   }
 
   // Adjust the rect for the specified window style
-  RECT rect = {0, 0, 640, 480};        // Client area size
-  DWORD dwexstyle = kWindowExStyle;    // Fixed (no) flags.
-  DWORD dwstyle = kWindowStyleNormal;  // Used by eqmain.
+  RECT rect = {0, 0, kStartupWidth, kStartupHeight};  // Client area size
+  DWORD dwexstyle = kWindowExStyle;                   // Fixed (no) flags.
+  DWORD dwstyle = kWindowStyleNormal;                 // Used by eqmain.
   ::AdjustWindowRectEx(&rect, dwstyle, FALSE, 0);
   int win_width = rect.right - rect.left;
   int win_height = rect.bottom - rect.top;
   int x = (::GetSystemMetrics(SM_CXSCREEN) - win_width) / 2;
   int y = (::GetSystemMetrics(SM_CYSCREEN) - win_height) / 2;
+  x = Ini::GetValue<int>("EqwOffsets", std::string(kIniLoginOffset) + "X", x, ini_path_.string().c_str());
+  y = Ini::GetValue<int>("EqWOffsets", std::string(kIniLoginOffset) + "Y", y, ini_path_.string().c_str());
 
   hwnd_ = ::CreateWindowExA(dwexstyle, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width, win_height, NULL, NULL,
                             NULL, NULL);
@@ -129,22 +132,33 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
   return hwnd_;
 }
 
-void SetClientSize(int client_width, int client_height, bool center = false) {
+void SetClientSize(int client_width, int client_height, bool use_startup = false) {
   // Constrain the minimum sizes.
   if (client_width < kStartupHeight || client_height < kStartupWidth) {
     Logger::Info("EqGame: Preventing small client size: %d x %d", client_width, client_height);
     client_width = max(client_width, kStartupWidth);
     client_height = max(client_height, kStartupHeight);
-    center = true;
+    use_startup = true;
   }
 
-  // Retrieve the screen coordinates of the monitor with the most current window overlap.
+  // First try to retrieve the stored offset location for this resolution.
+  bool center = false;
+  std::string setting_stem = use_startup ? std::string(kIniLoginOffset)
+                                         : (std::to_string(client_width) + "by" + std::to_string(client_height));
+  int x = Ini::GetValue<int>("EqwOffsets", setting_stem + "X", -32768, ini_path_.string().c_str());
+  int y = Ini::GetValue<int>("EqWOffsets", setting_stem + "Y", -32768, ini_path_.string().c_str());
+  bool valid_offset = (x != -32768 && y != -32768);
+
+  // Then use that to retrieve the relevant monitor info.
+  HMONITOR monitor = valid_offset ? ::MonitorFromPoint(POINT(x, y), MONITOR_DEFAULTTONEAREST)
+                                  : ::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
   MONITORINFO monitor_info;
   monitor_info.cbSize = sizeof(monitor_info);
-  GetMonitorInfo(::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &monitor_info);
-  RECT rect(monitor_info.rcMonitor);
-  int full_width = rect.right - rect.left;
-  int full_height = rect.bottom - rect.top;
+  RECT full_rect(0, 0, client_width + 100, client_height + 100);  // Fallback monitor size.
+  if (::GetMonitorInfo(monitor, &monitor_info)) full_rect = monitor_info.rcMonitor;
+
+  int full_width = full_rect.right - full_rect.left;
+  int full_height = full_rect.bottom - full_rect.top;
   bool full_screen =
       IsGameInitialized() && (full_screen_mode_ || ((client_width == full_width) && (client_height == full_height)));
 
@@ -156,23 +170,17 @@ void SetClientSize(int client_width, int client_height, bool center = false) {
   int height = full_screen ? full_height : client_height;
   DWORD style = full_screen ? kWindowStyleFullScreen : kWindowStyleNormal;
   DWORD ex_style = kWindowExStyle;
-  RECT adjusted_rect = full_screen ? rect : RECT(0, 0, width, height);
+  RECT adjusted_rect = full_screen ? full_rect : RECT(0, 0, width, height);
   ::AdjustWindowRectEx(&adjusted_rect, style, FALSE, ex_style);
   width = adjusted_rect.right - adjusted_rect.left;
   height = adjusted_rect.bottom - adjusted_rect.top;
 
-  int x = 0;
-  int y = 0;
   if (full_screen) {
-    x = adjusted_rect.left;  // Should be same as rect.left with WS_POPUP style.
+    x = adjusted_rect.left;  // Should be same as full_rect.left when using WS_POPUP style.
     y = adjusted_rect.top;
-  } else if (center) {
-    x = (::GetSystemMetrics(SM_CXSCREEN) - width) / 2;
-    y = (::GetSystemMetrics(SM_CYSCREEN) - height) / 2;
-  } else {
-    std::string resolution = std::to_string(client_width) + "by" + std::to_string(client_height);
-    x = Ini::GetValue<int>("EqwOffsets", resolution + "X", 0, ini_path_.string().c_str());
-    y = Ini::GetValue<int>("EqWOffsets", resolution + "Y", 0, ini_path_.string().c_str());
+  } else if (!valid_offset) {
+    x = (full_width - width) / 2;  // Calculate centered defaults.
+    y = (full_height - height) / 2;
   }
   Logger::Info("EqGame: Set window position: %d %d %d x %d", x, y, width, height);
 
@@ -185,7 +193,7 @@ HMODULE WINAPI Kernel32LoadLibraryAHook(LPCSTR lpLibFileName) {
   HMODULE hmod = hook_LoadLibrary_.original(Kernel32LoadLibraryAHook)(lpLibFileName);
   if (hmod) {
     if (!_stricmp(lpLibFileName, "eqmain.dll")) {
-      EqMain::Initialize(hmod, hwnd_, eqmain_init_fn_);
+      EqMain::Initialize(hmod, hwnd_, ini_path_, eqmain_init_fn_);
     }
     if (!_stricmp(lpLibFileName, "eqgfx_dx8.dll")) {
       EqGfx::Initialize(hmod, eqgfx_init_fn_, [](int width, int height) { SetClientSize(width, height); });
@@ -259,10 +267,10 @@ void StoreWindowOffsets() {
 
   // Update the ini if needed.
   std::string resolution = std::to_string(client_width) + "by" + std::to_string(client_height);
-  int left = Ini::GetValue("EqwOffsets", resolution + "X", 0, ini_path_.string().c_str());
-  int top = Ini::GetValue("EqwOffsets", resolution + "Y", 0, ini_path_.string().c_str());
-  if (left != rect.left) Ini::SetValue("EqwOffsets", resolution + "X", rect.left, ini_path_.string().c_str());
-  if (top != rect.top) Ini::SetValue("EqwOffsets", resolution + "Y", rect.top, ini_path_.string().c_str());
+  int left = Ini::GetValue<int>("EqwOffsets", resolution + "X", 0, ini_path_.string().c_str());
+  int top = Ini::GetValue<int>("EqwOffsets", resolution + "Y", 0, ini_path_.string().c_str());
+  if (left != rect.left) Ini::SetValue<int>("EqwOffsets", resolution + "X", rect.left, ini_path_.string().c_str());
+  if (top != rect.top) Ini::SetValue<int>("EqwOffsets", resolution + "Y", rect.top, ini_path_.string().c_str());
 }
 
 // Toggles full screen mode.
@@ -308,7 +316,7 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_SYSCOMMAND:
       if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Suppress alt activated menu keys.
-      if ((wParam & 0xfff0) == SC_MAXIMIZE) {
+      if ((wParam & 0xfff0) == SC_MAXIMIZE) {         // Use as a signal for re-entering eqmain mode.
         if (!IsGameInitialized()) SetClientSize(kStartupWidth, kStartupHeight, true);
         return 0;
       }

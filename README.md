@@ -61,7 +61,14 @@ general ones are read at boot time while the offsets are written and read while 
   - **Values:** Integer values in screen pixels.
   - **Description:** The X and Y offsets of the windows at resolution `<width>` by `<height>`
   - **Note:** When changing video modes in game, both the original and new are reset to zero
-              x and y offsets for safe starting position and recovery.
+              x and y offsets for the current monitor for safe starting position and recovery.
+
+- `LoginX`
+- `LoginY`
+  - **Values:** Integer values in screen pixels.
+  - **Description:** The X and Y offsets of the startup and login windows.
+
+
 
  ### Existing ini fields
  - The `[VideoMode]: RefreshRate` value is ignored

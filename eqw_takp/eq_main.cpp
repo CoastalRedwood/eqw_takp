@@ -13,6 +13,7 @@
 
 #include "dinput_manager.h"
 #include "iat_hook.h"
+#include "ini.h"
 #include "logger.h"
 #include "vtable_hook.h"
 
@@ -36,6 +37,9 @@ static constexpr int kClientHeight = 480;
 RECT client_rect_ = {0, 0, kClientWidth, kClientHeight};  // Updated to screen coords.
 int win_width_ = kClientWidth;                            // Increases later due to border.
 int win_height_ = kClientHeight;                          // Increases later due to border and title bar.
+std::filesystem::path ini_path_;
+static constexpr char kIniLoginOffsetX[] = "LoginX";
+static constexpr char kIniLoginOffsetY[] = "LoginY";
 
 // EqMain.dll hooks installed when the library is loaded.
 IATHook hook_DirectDrawCreate_;
@@ -347,8 +351,11 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
 
   Logger::Info("EqMain: Wnd: 0x%x, (%d x %d)", (DWORD)hwnd_, win_width_, win_height_);
 
+  // Calculate centered defaults and then try to retrieve ini settings.
   X = (GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
   Y = (GetSystemMetrics(SM_CYSCREEN) - win_height_) / 2;
+  X = Ini::GetValue<int>("EqwOffsets", kIniLoginOffsetX, X, ini_path_.string().c_str());
+  Y = Ini::GetValue<int>("EqWOffsets", kIniLoginOffsetY, Y, ini_path_.string().c_str());
 
   SetWindowPos(hwnd_, 0, X, Y, win_width_, win_height_, 0);
   UpdateClientRegion(hwnd_);
@@ -358,9 +365,23 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
   return hwnd_;
 }
 
+// Updates the stored window offsets for the active window.
+void StoreWindowOffsets() {
+  RECT rect;
+  if (!::GetWindowRect(hwnd_, &rect)) return;
+
+  // Update the ini if needed.
+  int left = Ini::GetValue<int>("EqwOffsets", kIniLoginOffsetX, 0, ini_path_.string().c_str());
+  int top = Ini::GetValue<int>("EqwOffsets", kIniLoginOffsetY, 0, ini_path_.string().c_str());
+  if (left != rect.left) Ini::SetValue<int>("EqwOffsets", kIniLoginOffsetX, rect.left, ini_path_.string().c_str());
+  if (top != rect.top) Ini::SetValue<int>("EqwOffsets", kIniLoginOffsetY, rect.top, ini_path_.string().c_str());
+}
+
 // EqMain is re-using our Eqw window, so don't let it be destroyed but reset the wndproc handlers.
 BOOL WINAPI User32DestroyWindowHook(HWND hwnd) {
   Logger::Info("EqMain: Destroy - Disconnecting eqmain wndproc");
+
+  StoreWindowOffsets();  // Save the location if updated.
 
   // Disable special window handling.
   eqmain_wndproc_ = nullptr;
@@ -433,9 +454,10 @@ LONG WINAPI User32SetWindowLongAHook(HWND wnd, int index, long dwNewLong) {
 
 // Initializes state and installs the hooks to bootstrap the rest.
 // Note that unlike eqgame, this will get called multiple times if dropping back to login screen.
-void InitializeEqMain(HMODULE handle, HWND hwnd, void(__cdecl* init_fn)()) {
+void InitializeEqMain(HMODULE handle, HWND hwnd, const std::filesystem::path& ini_path, void(__cdecl* init_fn)()) {
   hwnd_ = hwnd;
   eqmain_wndproc_ = nullptr;
+  ini_path_ = ini_path;
 
   DInputManager::Initialize(handle);
 
@@ -465,7 +487,7 @@ void InitializeEqMain(HMODULE handle, HWND hwnd, void(__cdecl* init_fn)()) {
 }  // namespace
 }  // namespace EqMainInt
 
-void EqMain::Initialize(HMODULE handle, HWND hwnd, void(__cdecl* init_fn)()) {
+void EqMain::Initialize(HMODULE handle, HWND hwnd, const std::filesystem::path& ini_path, void(__cdecl* init_fn)()) {
   Logger::Info("EqMain: Initialize");
-  EqMainInt::InitializeEqMain(handle, hwnd, init_fn);
+  EqMainInt::InitializeEqMain(handle, hwnd, ini_path, init_fn);
 }
