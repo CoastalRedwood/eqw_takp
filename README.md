@@ -1,4 +1,8 @@
 # Windowed-mode support for the TAKP client.
+
+Eqw TAKP custom code is entirely open source. The releases are built by github servers
+directly from the repo source, providing full transparency on the release contents.
+
 ## Features
   - Significantly improved mouse and keyboard input behavior
     - Eliminates phantom mouse and keyboard input glitches when switching focus back to game
@@ -18,10 +22,14 @@
     - High frequency cpu timebase fix
     - Swapping left / mouse buttons
     - Stretched full screen mode
+    - Login window and per resolution game window positions
   - Supports lighter weight dgvoodoo alternative d3d8to9 (below)
 
 ## Installation
-  - Copy the eqw.dll to your client game directory
+  - Download the [latest release](https://github.com/CoastalRedwood/eqw_takp/releases/latest) eqw.dll
+    and copy it to your client game directory
+    - Note: Browsers may complain about downloading a dll from a website. See comment at top that
+      the dll content is entirely transparent and compiled directly on github.
   - Install (copy over) a compatible (updated) eqgame.dll file
   - If using Zeal a version newer than 1.3.0-beta2 is required for lmb panning to function
   - Review the Settings section below if any desire to modify defaults
@@ -67,8 +75,6 @@ general ones are read at boot time while the offsets are written and read while 
 - `LoginY`
   - **Values:** Integer values in screen pixels.
   - **Description:** The X and Y offsets of the startup and login windows.
-
-
 
  ### Existing ini fields
  - The `[VideoMode]: RefreshRate` value is ignored
