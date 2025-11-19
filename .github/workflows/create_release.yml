@@ -26,7 +26,7 @@ jobs:
       - name: Create the github release tag and upload artifacts
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "./Release/eqw.dll"
+          artifacts: "./Release/eqw.dll,./Release/eqw.pdb"
           artifactErrorsFailBuild: true
           commit: ${{ github.sha }}
           tag: ${{ github.event.inputs.release_version_tag }}
