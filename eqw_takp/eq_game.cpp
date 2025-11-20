@@ -26,6 +26,9 @@ static constexpr char kIniLoginOffset[] = "Login";
 static constexpr DWORD kWindowExStyle = 0;  // No flags.
 static constexpr DWORD kWindowStyleNormal = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME;
 static constexpr DWORD kWindowStyleFullScreen = WS_POPUP | WS_VISIBLE;
+static constexpr int kDeviceForceReset = EqGfx::kDeviceLostMsgId + 1;
+static constexpr int kIconId = 107;    // Resource ID in the exe.
+static constexpr int kIconSize = 128;  // Largest icon in the exe.
 
 // State and resources updated at initialization.
 std::filesystem::path exe_path_;  // Full path filename for eqgame.exe file.
@@ -48,7 +51,6 @@ IATHook hook_ShowWindow_;
 // Internal state while eqgame is controlling the window (vs eqmain).
 bool full_screen_mode_ = false;     // Enables full screen (non-windowed).
 WNDPROC eqgame_wndproc_ = nullptr;  // Stores eqgame.exe's wndproc.
-bool isFocused_ = false;
 
 // Internal methods.
 
@@ -69,14 +71,10 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void CreateEqWindow() {
   Logger::Info("CreateEqWindow()");
 
-  // Extract the first large and small icon
-  HICON large_icons[1];
-  HICON small_icons[1];
-  UINT extracted_count = ::ExtractIconExA(exe_path_.string().c_str(), 0, large_icons, small_icons, 1);
-  if (extracted_count) {
-    hicon_large_ = large_icons[0];
-    hicon_small_ = small_icons[0];
-  }
+  // Load the AK logo icons.
+  hicon_small_ = ::LoadIconA(::GetModuleHandle(NULL), MAKEINTRESOURCEA(kIconId));
+  hicon_large_ = (HICON)::LoadImageA(::GetModuleHandleA(NULL), MAKEINTRESOURCEA(kIconId), IMAGE_ICON, kIconSize,
+                                     kIconSize, LR_DEFAULTCOLOR | LR_SHARED);
 
   WNDCLASSA wc = {};
   wc.lpfnWndProc = GameWndProc;  // Custom handler to intercept messages.
@@ -133,8 +131,12 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
 }
 
 void SetClientSize(int client_width, int client_height, bool use_startup = false) {
-  // Constrain the minimum sizes.
-  if (client_width < kStartupHeight || client_height < kStartupWidth) {
+  // The client generates 0x0 sizes while resetting D3D. We just ignore them and leave
+  // our window size unchanged until a real (valid) size is commanded.
+  if (client_width == 0 && client_height == 0) return;
+
+  // Constrain the minimum sizes (shouldn't happen with the 0x0 check above but just in case).
+  if (client_width < kStartupWidth || client_height < kStartupHeight) {
     Logger::Info("EqGame: Preventing small client size: %d x %d", client_width, client_height);
     client_width = max(client_width, kStartupWidth);
     client_height = max(client_height, kStartupHeight);
@@ -249,7 +251,7 @@ void PaintIcon(HWND hwnd) {
 
   PAINTSTRUCT ps;
   HDC hdc = ::BeginPaint(hwnd, &ps);
-  int size = 128;
+  int size = kIconSize;
   int left = (kStartupWidth - size) / 2;
   int top = (kStartupHeight - size) / 2;
   ::DrawIconEx(hdc, left, top, hicon_large_, size, size, 0, 0, DI_NORMAL);
@@ -342,7 +344,8 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     // Custom message to handle d3d reset and recovery on the correct thread.
     case EqGfx::kDeviceLostMsgId:
-      if (wParam == EqGfx::kDeviceLostMsgId) EqGfx::HandleDeviceLost();
+      if (wParam == EqGfx::kDeviceLostMsgId || wParam == kDeviceForceReset)
+        EqGfx::HandleDeviceLost(wParam == kDeviceForceReset);
       break;
 
     default:
@@ -410,5 +413,5 @@ void EqGame::SetEqCreateWinInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqcreat
 void EqGame::ResetD3D8() {
   // Note this is also a potential blocking cross-threading call.
   Logger::Info("EqGame: Sending ResetD3D8 request");
-  ::SendMessage(EqGameInt::hwnd_, EqGfx::kDeviceLostMsgId, EqGfx::kDeviceLostMsgId, 0);
+  ::SendMessage(EqGameInt::hwnd_, EqGfx::kDeviceLostMsgId, EqGameInt::kDeviceForceReset, 0);
 }

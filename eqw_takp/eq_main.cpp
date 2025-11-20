@@ -215,7 +215,9 @@ ULONG WINAPI DDrawReleaseHook(IDirectDraw* lplpDD) {
   if (secondary_surface_) secondary_surface_->Release();
   secondary_surface_ = nullptr;
 
-  return hook_DDrawRelease_.original(DDrawReleaseHook)(lplpDD);
+  int ref_count = hook_DDrawRelease_.original(DDrawReleaseHook)(lplpDD);
+  if (ref_count != 0) Logger::Error("EqMain: DDraw is leaking with ref count: %d", ref_count);
+  return ref_count;
 }
 
 // Block any changes to our fixed 640x480 and Bpp.

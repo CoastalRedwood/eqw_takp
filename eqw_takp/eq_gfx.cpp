@@ -24,13 +24,24 @@ IATHook hook_SetWindowLongA_;
 IATHook hook_SetWindowPos_;
 IATHook hook_Direct3DCreate8_;
 
-// Direct3D hooks installed when the device is created.
-VTableHook hook_CreateDevice_;
-VTableHook hook_Reset_;
+// Direct3D hooks installed when the interface and devices are created.
+VTableHook hook_CreateDevice_;  // Direct3D.
+VTableHook hook_Release_;       // Direct3DDevice.
+VTableHook hook_Reset_;         // Direct3DDevice.
 
-IDirect3DDevice8* device_;
+IDirect3DDevice8* device_ = nullptr;  // Local pointer to the allocated d3d device.
 
 // Internal methods
+
+// Null our local pointer to the d3d device if the reference count drops to zero.
+HRESULT WINAPI D3DDeviceReleaseHook(IDirect3DDevice8* Device) {
+  int new_count = hook_Release_.original(D3DDeviceReleaseHook)(Device);
+  if (new_count == 0) {
+    Logger::Info("EqGfx: Releasing device: 0x%08x", (int)(Device));
+    device_ = nullptr;
+  }
+  return new_count;
+}
 
 // The reset hook is used to override the game and remain in windowed mode as well as perform
 // the callback to inform the eqw windowing system when the resolution is changing.
@@ -88,12 +99,12 @@ HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE D
   HRESULT result = hook_CreateDevice_.original(D3D8CreateDeviceHook)(
       pD3D, Adapter, DeviceType, hwnd_, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
   if (SUCCEEDED(result)) {
-    Logger::Info("EqGFX: Installing D3D8CreateDeviceHook");
-    void** vtable = *(void***)*ppReturnedDeviceInterface;
+    device_ = *ppReturnedDeviceInterface;
+    Logger::Info("EqGFX: Installing D3D8CreateDeviceHook (0x%08x)", (int)(device_));
+    void** vtable = *(void***)device_;
+    hook_Release_ = VTableHook(vtable, 2, D3DDeviceReleaseHook, false);
     hook_Reset_ = VTableHook(vtable, 14, D3DDeviceResetHook, false);
     set_client_size_cb_(pPresentationParameters->BackBufferWidth, pPresentationParameters->BackBufferHeight);
-
-    device_ = *ppReturnedDeviceInterface;
   } else {
     Logger::Error("EqGFX: Create device failure: 0x%08x", result);
   }
@@ -142,10 +153,11 @@ HRESULT WINAPI User32SetWindowPosHook(HWND hWnd, HWND hWndInsertAfter, int X, in
   return S_FALSE;
 }
 
-// Returns true if in the active in world game state.
-bool IsGameInGameState() {
-  const int* eq = *reinterpret_cast<int**>(0x00809478);
-  return eq && eq[0x5AC / 4] == 5;  // Check the game state stored in the EQ object.
+// Returns true if the primary EQ object is constructred and the flag used to control the pump loop is zero.
+bool IsMessagePumpActive() {
+  int* eq = *reinterpret_cast<int**>(0x00809478);
+  int process_game_complete_flag = *reinterpret_cast<int*>(0x0080947c);
+  return eq != nullptr && process_game_complete_flag == 0;
 }
 
 // The expected directx recovery procedure for a lost device is to recognize it happened in Present()
@@ -154,13 +166,25 @@ bool IsGameInGameState() {
 // and preferably that's the same thread as the wndproc (which is true for eqgame.exe).
 
 // This should be called by a WndProc message.
-void HandleDeviceLost() {
-  if (!IsGameInGameState() || !device_) return;  // Only attempt if we are actively in game.
-
-  // Only execute a recovery Reset() if the d3d device returns the result below.
-  if (device_->TestCooperativeLevel() != D3DERR_DEVICENOTRESET) return;
-
+void HandleDeviceLost(bool force_reset) {
   static int recovery_attempt_counter = 0;
+
+  if (!IsMessagePumpActive() || !device_) return;  // Only attempt if we are actively in game.
+
+  // Check if the device is ready (or even needs to be) Reset().
+  auto result = device_->TestCooperativeLevel();
+  if (result != D3DERR_DEVICENOTRESET && !force_reset)
+    return;  // Either not necessary or device is lost, so return quietly.
+
+  if (force_reset) {
+    recovery_attempt_counter = 0;  // Expected to be rate limited by external caller.
+    if (result == D3DERR_DEVICELOST) {
+      Logger::Error("EqGfx: Ignoring forced reset due to lost device.");
+      return;
+    }
+    Logger::Error("EqGfx: Forcing reset with status 0x%08x", result);
+  }
+
   if (++recovery_attempt_counter <= 5) Logger::Error("EqGfx: Attempting d3d device recovery");
 
   auto handle = ::GetModuleHandleA("eqgfx_dx8.dll");
@@ -171,7 +195,7 @@ void HandleDeviceLost() {
 
   if (recovery_attempt_counter > 5) return;
 
-  auto result = device_->TestCooperativeLevel();
+  result = device_->TestCooperativeLevel();
   if (result == D3D_OK)
     Logger::Info("EqGfx: Device is reporting okay");
   else
@@ -180,7 +204,7 @@ void HandleDeviceLost() {
 
 // Sends a custom user message ID to notify the wndproc thread to attempt device recovery.
 void SendDeviceLostMessage() {
-  if (!IsGameInGameState() || !hwnd_)
+  if (!IsMessagePumpActive() || !hwnd_)
     return;  // Only try to recover in-game when the message queue is actively listening.
 
   static int send_message_counter = 0;
@@ -263,4 +287,4 @@ void EqGfx::Initialize(HMODULE handle, void(__cdecl* init_fn)(),
 
 void EqGfx::SetWindow(HWND wnd) { EqGfxInt::hwnd_ = wnd; }
 
-void EqGfx::HandleDeviceLost() { EqGfxInt::HandleDeviceLost(); }
+void EqGfx::HandleDeviceLost(bool force_reset) { EqGfxInt::HandleDeviceLost(force_reset); }

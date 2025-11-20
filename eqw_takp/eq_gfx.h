@@ -13,5 +13,5 @@ void Initialize(HMODULE handle, void(__cdecl* init_fn)(),
 
 void SetWindow(HWND hwnd);
 
-void HandleDeviceLost();  // Attempts to recover the device. Must call from wndproc.
+void HandleDeviceLost(bool force_reset);  // Attempts to recover the device. Must call from wndproc.
 }  // namespace EqGfx
