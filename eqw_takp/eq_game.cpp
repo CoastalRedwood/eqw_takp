@@ -340,6 +340,11 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
       SetFullScreenMode(wParam != 0);
       break;
 
+    // Custom message to handle d3d reset and recovery on the correct thread.
+    case EqGfx::kDeviceLostMsgId:
+      if (wParam == EqGfx::kDeviceLostMsgId) EqGfx::HandleDeviceLost();
+      break;
+
     default:
       break;
   }
@@ -390,7 +395,7 @@ int EqGame::GetEnableFullScreen() {
 }
 
 void EqGame::SetEnableFullScreen(int enable) {
-  // Note this is a cross-threading call (eq game processingi thread is spun off
+  // Note this is a cross-threading call (eq game processing thread is spun off
   // from the main thread with the wndproc) so it will block until that thread
   // processes the message in the queue.
   ::SendMessageA(EqGameInt::hwnd_, WM_USER, enable, 0);
@@ -401,3 +406,9 @@ void EqGame::SetEqMainInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqmain_init_
 void EqGame::SetEqGfxInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqgfx_init_fn_ = init_fn; }
 
 void EqGame::SetEqCreateWinInitFn(void(__cdecl* init_fn)()) { EqGameInt::eqcreatewin_init_fn_ = init_fn; }
+
+void EqGame::ResetD3D8() {
+  // Note this is also a potential blocking cross-threading call.
+  Logger::Info("EqGame: Sending ResetD3D8 request");
+  ::SendMessage(EqGameInt::hwnd_, EqGfx::kDeviceLostMsgId, EqGfx::kDeviceLostMsgId, 0);
+}

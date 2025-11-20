@@ -50,6 +50,12 @@ extern "C" void __stdcall SetEqCreateWinInitFn(void(__cdecl* init_fn)()) {
   EqGame::SetEqCreateWinInitFn(init_fn);  // Use GetGameWindow() if a handle is needed.
 }
 
+// Performs a blocking SendMessage() call that will perform a reset of the Direct3D8
+// device (including release and reacquisition of game resources) if necessary.
+// The message is ignored if not in the game and only triggers a Reset() if the device
+// is in the correct state to need a Reset().
+extern "C" void __stdcall ResetD3D8() { EqGame::ResetD3D8(); }
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
   return TRUE;  // Do nothing.  The ordinal 1 call above initializes and it is never unloaded.
 }

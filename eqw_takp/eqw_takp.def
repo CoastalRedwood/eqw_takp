@@ -8,3 +8,4 @@ EXPORTS
   SetEqGfxInitFn
   SetEqCreateWinInitFn
   SetEqMainInitFn
+  ResetD3D8
