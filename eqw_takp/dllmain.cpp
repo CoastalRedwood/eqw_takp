@@ -8,7 +8,7 @@ extern "C" void __stdcall InitializeEqwDll() {
   EqGame::Initialize();  // Installs hooks that install the windowing wrappers.
 }
 
-static constexpr char kVersionStr[] = "0.0.4";
+static constexpr char kVersionStr[] = "0.0.5";
 
 // Provide a method for users to check version compatibility.
 extern "C" const char* __stdcall GetVersionStr() {
