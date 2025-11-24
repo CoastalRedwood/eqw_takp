@@ -13,6 +13,7 @@ int game_width_ = 640;                                // Cached copy of current 
 int game_height_ = 480;                               // Cached copy of current game screen height.
 RECT game_rect_ = {0, 0, game_width_, game_height_};  // Cached client rect in screen coordinates.
 
+bool disable_keydown_clear_ = false;
 bool swap_mouse_buttons_ = false;
 
 // Mouse state.
@@ -131,17 +132,21 @@ void UpdateModifierKeyStates() {
 }
 
 void ResetKeyboardState(bool perform_update_query) {
-  // The client reserves an array of mapped action/keydown states of at least 0xcd
-  // and based on the initialize and enter zone it is a full 0x100 array although
-  // the majority of those are not used. Just wipe them all clean like zoning.
-  const int kNumKeyStates = 0x100;
-  memset(reinterpret_cast<void*>(0x007ce04c), 0, kNumKeyStates * sizeof(int));
+  if (!disable_keydown_clear_) {
+    // The client reserves an array of mapped action/keydown states of at least 0xcd
+    // and based on the initialize and enter zone it is a full 0x100 array although
+    // the majority of those are not used. Just wipe them all clean like zoning.
+    const int kNumKeyStates = 0x100;
+    memset(reinterpret_cast<void*>(0x007ce04c), 0, kNumKeyStates * sizeof(int));
+  }
 
-  SetAltKeyState(false, false);
-  SetCtrlKeyState(false);
-  SetShiftKeyState(false);
-  SetCapsLockState(false);
-  SetNumLockState(false);
+  if (!disable_keydown_clear_ || perform_update_query) {
+    SetAltKeyState(false, false);
+    SetCtrlKeyState(false);
+    SetShiftKeyState(false);
+    SetCapsLockState(false);
+    SetNumLockState(false);
+  }
 
   // Also null out any active keydown state.
   auto xwnd_manager = *g_ptr_xwnd_manager;
@@ -336,12 +341,13 @@ void __fastcall RightMouseDownHook(void* this_ptr, int unused_edx, short x, shor
   }
 }
 
-void Initialize(HWND hwnd, bool swap_mouse_buttons) {
+void Initialize(HWND hwnd, bool swap_mouse_buttons, bool disable_keydown_clear) {
   hwnd_ = hwnd;
   game_width_ = 640;  // Safe defaults until first hooked update.
   game_height_ = 480;
   game_rect_ = {0, 0, game_width_, game_height_};
 
+  disable_keydown_clear_ = disable_keydown_clear;
   swap_mouse_buttons_ = swap_mouse_buttons;
   saved_rmouse_pt_ = {0, 0};
 
@@ -353,8 +359,8 @@ void Initialize(HWND hwnd, bool swap_mouse_buttons) {
 }  // namespace
 }  // namespace GameInputInt
 
-void GameInput::Initialize(HWND hwnd, bool swap_mouse_buttons) {
-  GameInputInt::Initialize(hwnd, swap_mouse_buttons);  // Resets state and installs the hooks.
+void GameInput::Initialize(HWND hwnd, bool swap_mouse_buttons, bool disable_keydown_clear) {
+  GameInputInt::Initialize(hwnd, swap_mouse_buttons, disable_keydown_clear);
 }
 
 void GameInput::HandleGainOfFocus() {

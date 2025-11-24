@@ -51,6 +51,8 @@ IATHook hook_ShowWindow_;
 // Internal state while eqgame is controlling the window (vs eqmain).
 bool full_screen_mode_ = false;     // Enables full screen (non-windowed).
 WNDPROC eqgame_wndproc_ = nullptr;  // Stores eqgame.exe's wndproc.
+int win_width_ = kStartupWidth;     // Updated during window creation based on style.
+int win_height_ = kStartupHeight;
 
 // Internal methods.
 
@@ -95,20 +97,24 @@ void CreateEqWindow() {
   DWORD dwexstyle = kWindowExStyle;                   // Fixed (no) flags.
   DWORD dwstyle = kWindowStyleNormal;                 // Used by eqmain.
   ::AdjustWindowRectEx(&rect, dwstyle, FALSE, 0);
-  int win_width = rect.right - rect.left;
-  int win_height = rect.bottom - rect.top;
-  int x = (::GetSystemMetrics(SM_CXSCREEN) - win_width) / 2;
-  int y = (::GetSystemMetrics(SM_CYSCREEN) - win_height) / 2;
+  win_width_ = rect.right - rect.left;
+  win_height_ = rect.bottom - rect.top;
+  int x = (::GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
+  int y = (::GetSystemMetrics(SM_CYSCREEN) - win_height_) / 2;
   x = Ini::GetValue<int>("EqwOffsets", std::string(kIniLoginOffset) + "X", x, ini_path_.string().c_str());
   y = Ini::GetValue<int>("EqWOffsets", std::string(kIniLoginOffset) + "Y", y, ini_path_.string().c_str());
 
-  hwnd_ = ::CreateWindowExA(dwexstyle, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width, win_height, NULL, NULL,
+  hwnd_ = ::CreateWindowExA(dwexstyle, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width_, win_height_, NULL, NULL,
                             NULL, NULL);
   EqGfx::SetWindow(hwnd_);
 
   full_screen_mode_ = Ini::GetValue<bool>("EqwGeneral", "FullScreenMode", false, ini_path_.string().c_str());
+
+  // Install mouse and keyboard handling hooks.
   bool swap_mouse_buttons = Ini::GetValue<bool>("EqwGeneral", "SwapMouseButtons", false, ini_path_.string().c_str());
-  GameInput::Initialize(hwnd_, swap_mouse_buttons);  // Install mouse and keyboard handling hooks.
+  bool disable_keydown_clear =
+      Ini::GetValue<bool>("EqwGeneral", "DisableKeydownClear", false, ini_path_.string().c_str());
+  GameInput::Initialize(hwnd_, swap_mouse_buttons, disable_keydown_clear);
 
   if (eqcreatewin_init_fn_) {
     Logger::Info("CreateEqWindow: Executing external init callback");
@@ -184,7 +190,10 @@ void SetClientSize(int client_width, int client_height, bool use_startup = false
     x = (full_width - width) / 2;  // Calculate centered defaults.
     y = (full_height - height) / 2;
   }
+  y = (y >= -20) ? y : -20;  // Clamp so title bar always remains accessible.
   Logger::Info("EqGame: Set window position: %d %d %d x %d", x, y, width, height);
+  win_width_ = width;  // Cache the final sizes for locking it down.
+  win_height_ = height;
 
   // Update the window style, size, and position.
   ::SetWindowLongA(hwnd_, GWL_STYLE, style);
@@ -264,6 +273,7 @@ void StoreWindowOffsets() {
 
   RECT rect;
   if (!::GetWindowRect(hwnd_, &rect)) return;
+  rect.top = (rect.top > -20) ? rect.top : -20;             // Clamp top so the titlebar is always accessible.
   int client_width = *reinterpret_cast<int*>(0x00798564);   // Game global screen x resolution.
   int client_height = *reinterpret_cast<int*>(0x00798568);  // Game global screen y resolution.
 
@@ -303,9 +313,21 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
       ::TerminateProcess(::GetCurrentProcess(), 0);
       break;
 
+    // Lock down the window size (primarily for dpi changes).
+    case WM_GETMINMAXINFO: {
+      MINMAXINFO* info = reinterpret_cast<MINMAXINFO*>(lParam);
+      info->ptMaxTrackSize = {win_width_, win_height_};
+      info->ptMinTrackSize = {win_width_, win_height_};
+      return 0;
+    }
+
     case WM_WINDOWPOSCHANGED:
       StoreWindowOffsets();
       return 0;
+
+    case WM_DPICHANGED:
+      Logger::Info("EqMain::DpiChanged to %d", LOWORD(wParam));
+      return 0;  // Skip default processing that would try to rescale.
 
     case WM_SETCURSOR:
       // The client wndproc always snuffs the cursor. We want it visible when the game's
@@ -368,6 +390,7 @@ void InitializeDebugLog() {
   std::filesystem::path log_file = exe_path_.parent_path() / "eqw_debug.txt";
   Logger::Initialize(log_file.string().c_str(), static_cast<Logger::Level>(log_level));
 
+  Logger::Info("EQW version: %s", EqGame::kVersionStr);
   Logger::Info("EQW debug log (level = %d)", log_level);
   Logger::Info("Exe path: %s", exe_path_.string().c_str());
   Logger::Info("Ini path: %s", ini_path_.string().c_str());
@@ -380,6 +403,23 @@ void InitializeIniFilename() {
   exe_path_ = std::filesystem::path(buffer);
   ini_path_ = exe_path_.parent_path() / "eqclient.ini";
 }
+
+void InitializeDpiAware() {
+  auto disable_dpi = Ini::GetValue<bool>("EqwGeneral", "DisableDpiAware", false, ini_path_.string().c_str());
+  if (disable_dpi) {
+    Logger::Info("EqGame: Dpi aware is disabled");
+    return;
+  }
+
+  // We set MONITOR_AWARE and not MONITOR_AWARE_V2 so we don't have to worry about the window sizes
+  // changing due to non-client elements. This avoids the need for some later OS dpi aware calls.
+  if (!::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE))
+    Logger::Error("EqGame: Failed to set dpi aware: 0x%08x", ::GetLastError());
+
+  Logger::Info("EqGame: Active dpi_awareness: %d",
+               ::GetAwarenessFromDpiAwarenessContext(::GetDpiAwarenessContextForProcess(NULL)));
+}
+
 }  // namespace
 }  // namespace EqGameInt
 
@@ -387,6 +427,7 @@ void EqGame::Initialize() {
   EqGameInt::InitializeIniFilename();
   EqGameInt::InitializeDebugLog();
   EqGameInt::InstallHooks(GetModuleHandleA(NULL));
+  EqGameInt::InitializeDpiAware();
 }
 
 HWND EqGame::GetGameWindow() {

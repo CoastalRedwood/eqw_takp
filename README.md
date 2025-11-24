@@ -6,7 +6,7 @@ directly from the repo source, providing full transparency on the release conten
 ## Features
   - Significantly improved mouse and keyboard input behavior
     - Eliminates phantom mouse and keyboard input glitches when switching focus back to game
-    - Wipes keydown states so game input goes to neutral (except autorun) when losing focus
+    - By default wipes keydown states so game input goes to neutral (except autorun) when losing focus
     - Synchronizes the game mouse position and win 32 cursor improvement to eliminate surprise
       off screen clicks and loss of focus (also matches sensitivities across windows)
     - Better locking of the mouse during RMB mouse look
@@ -18,10 +18,13 @@ directly from the repo source, providing full transparency on the release conten
     - Supports in-game toggling of stretched full screen mode (requires eqgame.dll support to activate)
     - Automatically goes borderless if the ini resolution is set to match the monitor
     - Generally cleaner window transitions and some polish like icons
+    - Supports application dpi awareness (no need to modify compatibility mode settings)
   - All ini settings were moved to eqclient.ini and adds ini options settings for:
     - High frequency cpu timebase fix
     - Swapping left / mouse buttons
     - Stretched full screen mode
+    - Disabling application dpi awareness
+    - Disabling the clearing of keydown states on loss of focus
     - Login window and per resolution game window positions
   - Supports lighter weight dgvoodoo alternative d3d8to9 (below)
 
@@ -57,6 +60,17 @@ general ones are read at boot time while the offsets are written and read while 
   - **Values:** `FALSE` (default) or `TRUE`
   - **Description:** Setting `TRUE` will disable the patch that implements a more
                      accurate timebase counter (high frequency cpu fix).
+
+- `DisableDpiAware`
+  - **Values:** `FALSE` (default) or `TRUE`
+  - **Description:** Setting `TRUE` will make the game not DPI aware and thus windows
+                     may scale the windows based on monitor dpi settings. This can result in
+                     blurry text and fuzzier stretched rendered bitmaps.
+
+- `DisableKeydownClear`
+  - **Values:** `FALSE` (default) or `TRUE`
+  - **Description:** Setting `TRUE` will prevent the clearing of keydown states upon loss
+                     of focus. Note that ctrl, alt, and shift are resynced upon regaining focus.
 
 - `DebugLogLevel`
   - **Values:** `0` (default=None), `1` (Error) or `2` (Info)
@@ -110,8 +124,9 @@ Only 32-bit video modes were tested.
    - NVidia fps limiter is not functional (Zeal version works fine)
    - Loading screen progress bar and text are not updating
    - The presence of the dgvoodoo ddraw.dll results in a black game screen
- - intel gpu w/out d3d8.dll:
-   - black screen (but game is running in background with sounds and ui)
+ - intel integrated laptop gpu:
+   - w/out d3d.dll: black screen (but game is running in background with sounds and ui)
+   - Functional after installing `The Microsoft DirectX End-User Runtime`
  - dgvoodoo:
    - Crashes char select -> login w/out ever entering world (dx 6.0 error dialog, same as old eqw)
    - It is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)

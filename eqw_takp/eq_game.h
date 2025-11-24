@@ -5,6 +5,8 @@
 // and creates the shared window and dinput objects also used by the eqmain.dll code.
 
 namespace EqGame {
+static constexpr char kVersionStr[] = "0.0.5";
+
 void Initialize();
 HWND GetGameWindow();
 

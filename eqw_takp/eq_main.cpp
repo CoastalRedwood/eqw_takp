@@ -265,8 +265,31 @@ void UpdateClientRegion(HWND hwnd) {
   // This is just temporary sanity checking.
   int width = client_rect_.right - client_rect_.left;
   int height = client_rect_.bottom - client_rect_.top;
-  if (width != kClientWidth || height != kClientHeight)
-    Logger::Error("EqMain: Incorrect client width %d x %d", width, height);
+  if (width != kClientWidth || height != kClientHeight) {
+    RECT win_rect;
+    ::GetWindowRect(hwnd, &win_rect);
+    Logger::Error("EqMain: Incorrect client width %d x %d from %d x %d", width, height, win_rect.right - win_rect.left,
+                  win_rect.bottom - win_rect.top);
+  }
+}
+
+// Updates the win_width_ and win_height_ parameters based on the fixed client size.
+void UpdateWinSizeFromFixedClientSize(HWND hwnd) {
+  // Get the current window styles.
+  DWORD dwStyle = (DWORD)::GetWindowLong(hwnd, GWL_STYLE);
+  DWORD dwExStyle = (DWORD)::GetWindowLong(hwnd, GWL_EXSTYLE);
+
+  // Define a RECT with the desired client size.
+  // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
+  // Not using the DPI aware version for greater OS compatibility (assuming not v2 awareness).
+  RECT win_rect = {0, 0, kClientWidth, kClientHeight};
+  ::AdjustWindowRectEx(&win_rect, dwStyle, FALSE, dwExStyle);
+
+  // Calculate the width and height including non-client areas
+  win_width_ = win_rect.right - win_rect.left;
+  win_height_ = win_rect.bottom - win_rect.top;
+
+  Logger::Info("EqMain: Wnd: 0x%x, (%d x %d)", (DWORD)hwnd, win_width_, win_height_);
 }
 
 // This specialized WndProc is installed to intercept messages to our shared window while EqMain's
@@ -296,6 +319,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_GETMINMAXINFO: {
       MINMAXINFO* info = reinterpret_cast<MINMAXINFO*>(lParam);
+      info->ptMaxTrackSize = {win_width_, win_height_};  // Restrict min and max during dpi changes (no scaling).
       info->ptMinTrackSize = {win_width_, win_height_};  // Prevent it collapsing when moved/minimized in relogin.
       return 0;
     }
@@ -303,6 +327,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_WINDOWPOSCHANGED:
       UpdateClientRegion(hwnd);
       return 0;
+
+    case WM_DPICHANGED:
+      // We skip calling ::SetWindowPos() here and handle it later in WM_WINDOWPOSCHANGING.
+      Logger::Info("EqMain::DpiChanged to %d", LOWORD(wParam));
+      return 0;  // Skip default processing that would try to rescale.
 
     case WM_SETCURSOR:
       SetCursor(::LoadCursor(NULL, IDC_ARROW));
@@ -338,20 +367,8 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
   original_wndproc_ = reinterpret_cast<WNDPROC>(::GetWindowLongA(hwnd_, GWL_WNDPROC));
   ::SetWindowLongA(hwnd_, GWL_WNDPROC, reinterpret_cast<LONG>(WndProc));
 
-  // Get the current window styles
-  dwStyle = (DWORD)GetWindowLong(hwnd_, GWL_STYLE);
-  dwExStyle = (DWORD)GetWindowLong(hwnd_, GWL_EXSTYLE);
-
-  // Define a RECT with the desired client size
-  // Adjust the rectangle to include non-client areas (title bar, borders, etc.)
-  RECT win_rect = {0, 0, nWidth, nHeight};
-  AdjustWindowRectEx(&win_rect, dwStyle, FALSE, dwExStyle);
-
-  // Calculate the width and height including non-client areas
-  win_width_ = win_rect.right - win_rect.left;
-  win_height_ = win_rect.bottom - win_rect.top;
-
-  Logger::Info("EqMain: Wnd: 0x%x, (%d x %d)", (DWORD)hwnd_, win_width_, win_height_);
+  if (nWidth != kClientWidth || nHeight != kClientHeight) Logger::Error("EqMain: Ignoring unexpected size");
+  UpdateWinSizeFromFixedClientSize(hwnd_);
 
   // Calculate centered defaults and then try to retrieve ini settings.
   X = (GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
