@@ -69,12 +69,17 @@ VTableHook hook_GetAttachedSurface_;
 
 // Explict bitblit copy from the backbuffer secondary surface to the primary client surface.
 HRESULT WINAPI DDrawSurfaceFlipHook(IDirectDrawSurface* surface, IDirectDrawSurface* surface2, DWORD flags) {
+  static bool error_logged = false;
   HRESULT result = dd_ ? dd_->WaitForVerticalBlank(1, hwnd_) : DD_OK;
   if (!(secondary_surface_->IsLost() == DDERR_SURFACELOST) && !(primary_surface_->IsLost() == DDERR_SURFACELOST)) {
     RECT srcRect = {0, 0, kClientWidth, kClientHeight};
     RECT destRect = client_rect_;
     HRESULT result = surface->Blt(&destRect, secondary_surface_, &srcRect, DDBLT_WAIT, nullptr);
     *surface = *secondary_surface_;
+    error_logged = false;
+  } else if (!error_logged) {
+    error_logged = true;
+    Logger::Error("EqMain: Lost a surface. Blt was skipped.");
   }
   return result;
 }

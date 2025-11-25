@@ -50,7 +50,8 @@ const char* GetDeviceStr(LPDIRECTINPUTDEVICE8W device) {
 
 // Block any client attempts to release the dinput device resources.
 HRESULT WINAPI DeviceReleaseHook(LPDIRECTINPUTDEVICE8W device) {
-  Logger::Info("Blocking DInput %s release request", GetDeviceStr(device));
+  Logger::Info("Blocking DInput %s release request (0x%08x) on thread %d", GetDeviceStr(device), (int)device,
+               ::GetCurrentThreadId());
   return DI_OK;
 }
 
@@ -148,7 +149,7 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
   auto target_string = is_keyboard ? "Keyboard" : "Mouse";
 
   if (*target_device) {
-    Logger::Info("DInput: Reusing %s", target_string);
+    Logger::Info("DInput: Reusing %s on thread %d", target_string, ::GetCurrentThreadId());
     *device = *target_device;
     return DI_OK;
   }
@@ -165,7 +166,8 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
   // original table functions.
   *target_device = *device;
   void** vtable = *(void***)(*target_device);
-  Logger::Info("%s VTABLE 0x%x", target_string, (DWORD)vtable);
+  Logger::Info("%s (0x%08x) VTABLE 0x%x on thread %d", target_string, (DWORD)*target_device, (DWORD)vtable,
+               ::GetCurrentThreadId());
   if (is_keyboard) {
     hook_key_Release_ = VTableHook(vtable, 2, DeviceReleaseHook);
     hook_key_Acquire_ = VTableHook(vtable, 7, DeviceAcquireHook);
@@ -187,26 +189,28 @@ HRESULT WINAPI DirectInputCreateDeviceHook(LPDIRECTINPUT8* ppvOut, GUID& guid, L
 
 // Blocks any attempt by the client to release the DirectInput object.
 HRESULT WINAPI DirectInputReleaseHook(LPDIRECTINPUT8* ppvOut) {
-  Logger::Info("Blocking DirectInput8 Release call");
+  Logger::Info("Blocking DirectInput8 Release call: 0x%08x on thread %d", reinterpret_cast<int>(ppvOut),
+               ::GetCurrentThreadId());
   return DI_OK;
 }
 
 // Maintains the singleton dinput object and installs the hooks for managing devices and its own lifecycle.
-HRESULT WINAPI DirectInputCreateHook(HINSTANCE hinst, DWORD dwVersion, REFIID riidltf, LPDIRECTINPUT8* ppvOut,
-                                     LPDIRECTINPUT8 punkOuter) {
-  Logger::Info("DirectInputCreateHook -- Version: 0x%x", dwVersion);
+HRESULT WINAPI DirectInput8CreateHook(HINSTANCE hinst, DWORD dwVersion, REFIID riidltf, LPDIRECTINPUT8* ppvOut,
+                                      LPDIRECTINPUT8 punkOuter) {
+  Logger::Info("DirectInput8CreateHook -- Version: 0x%x on thread %d", dwVersion, ::GetCurrentThreadId());
   if (dinput_) {
     Logger::Info("Reusing dinput object");
     *ppvOut = dinput_;
     return DI_OK;
   }
 
-  auto result = hook_DirectInput_.original(DirectInputCreateHook)(hinst, dwVersion, riidltf, ppvOut, punkOuter);
+  auto result = hook_DirectInput_.original(DirectInput8CreateHook)(hinst, dwVersion, riidltf, ppvOut, punkOuter);
   if (result == DI_OK) {
     dinput_ = *ppvOut;
     void** vtable = *(void***)(*ppvOut);
     hook_DInputRelease_ = VTableHook(vtable, 2, DirectInputReleaseHook);
     hook_DInputCreateDevice_ = VTableHook(vtable, 3, DirectInputCreateDeviceHook);
+    Logger::Debug("DInput create success: 0x%08x on thread %d", reinterpret_cast<int>(dinput_), ::GetCurrentThreadId());
   } else {
     Logger::Error("DInput create error: %d", result);
   }
@@ -220,7 +224,7 @@ HRESULT WINAPI DirectInputCreateHook(HINSTANCE hinst, DWORD dwVersion, REFIID ri
 void DInputManager::Initialize(HMODULE handle) {
   // Note that multiple hmodules will get hooked and the original of this common global hook will point
   // to the final one, but they should all be equivalent / identical.
-  DInput::hook_DirectInput_ = IATHook(handle, "dinput8.dll", "DirectInput8Create", DInput::DirectInputCreateHook);
+  DInput::hook_DirectInput_ = IATHook(handle, "dinput8.dll", "DirectInput8Create", DInput::DirectInput8CreateHook);
 }
 
 // Support enabling background mode during eqmain which will crash out if the acquire fails.

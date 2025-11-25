@@ -73,7 +73,7 @@ general ones are read at boot time while the offsets are written and read while 
                      of focus. Note that ctrl, alt, and shift are resynced upon regaining focus.
 
 - `DebugLogLevel`
-  - **Values:** `0` (default=None), `1` (Error) or `2` (Info)
+  - **Values:** `0` (default=None), `1` (Error), `2` (Info), or `3` (Debug)
   - **Description:** Setting non-zero will enable the output of an `eqw_debug.txt` with
                      logging messages from the code.
 

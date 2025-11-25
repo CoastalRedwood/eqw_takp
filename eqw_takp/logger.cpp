@@ -48,6 +48,8 @@ void Info(const char* format, ...) {
 void Error(const char* format, ...) {
   if (!log_file || static_cast<int>(log_level) < static_cast<int>(Level::Error)) return;
 
+  fprintf(log_file, "Error: ");
+
   va_list args;
   va_start(args, format);
   vfprintf(log_file, format, args);
@@ -56,4 +58,18 @@ void Error(const char* format, ...) {
   fprintf(log_file, "\n");
   fflush(log_file);
 }
+
+// Logs at Level::Debug filter. Just duplicating since not worth repackaging va_list.
+void Debug(const char* format, ...) {
+  if (!log_file || static_cast<int>(log_level) < static_cast<int>(Level::Debug)) return;
+
+  va_list args;
+  va_start(args, format);
+  vfprintf(log_file, format, args);
+  va_end(args);
+
+  fprintf(log_file, "\n");
+  fflush(log_file);
+}
+
 }  // namespace Logger
