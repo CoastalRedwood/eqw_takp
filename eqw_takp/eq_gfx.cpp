@@ -28,6 +28,7 @@ IATHook hook_Direct3DCreate8_;
 VTableHook hook_CreateDevice_;  // Direct3D.
 VTableHook hook_Release_;       // Direct3DDevice.
 VTableHook hook_Reset_;         // Direct3DDevice.
+VTableHook hook_SetGammaRamp_;  // Direct3DDevice.
 
 IDirect3DDevice8* device_ = nullptr;  // Local pointer to the allocated d3d device.
 
@@ -73,6 +74,12 @@ HRESULT WINAPI D3DDeviceResetHook(IDirect3DDevice8* Device, D3DPRESENT_PARAMETER
   return result;
 }
 
+// This should not have an affect in windowed mode but block it for consistency just in case of some translation layer.
+HRESULT WINAPI D3DDeviceSetGammaRampHook(IDirect3DDevice8* Device, DWORD Flags, CONST D3DGAMMARAMP* pRamp) {
+  Logger::Debug("EqGFX: Blocking SetGammaRamp: 0x%08x", Flags);
+  return D3D_OK;
+}
+
 HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
                                     DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters,
                                     IDirect3DDevice8** ppReturnedDeviceInterface) {
@@ -104,6 +111,7 @@ HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE D
     void** vtable = *(void***)device_;
     hook_Release_ = VTableHook(vtable, 2, D3DDeviceReleaseHook, false);
     hook_Reset_ = VTableHook(vtable, 14, D3DDeviceResetHook, false);
+    hook_SetGammaRamp_ = VTableHook(vtable, 18, D3DDeviceSetGammaRampHook, false);
     set_client_size_cb_(pPresentationParameters->BackBufferWidth, pPresentationParameters->BackBufferHeight);
   } else {
     Logger::Error("EqGFX: Create device failure: 0x%08x", result);

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include "dinput_manager.h"
 #include "function_hook.h"
 #include "logger.h"
 
@@ -188,6 +189,8 @@ void ResetMouseUpdateValues(bool full_reset = true) {
   *g_mouse_x_delta_from_dinput = 0;
   *g_mouse_y_delta_from_dinput = 0;
   *g_mouse_scroll_delta_ticks = 0;
+
+  DInputManager::FlushMouse();
 }
 
 // Updates the cached game client rect on the screen and active game width and height resolutions.

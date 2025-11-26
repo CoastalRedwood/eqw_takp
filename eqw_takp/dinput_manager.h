@@ -22,4 +22,6 @@ void Initialize(HMODULE handle);
 void SetBackgroundMode(bool background_mode);  // Set during eqmain.
 void Acquire(bool keyboard_only = false);
 void Unacquire();
+void FlushMouse();
+
 };  // namespace DInputManager

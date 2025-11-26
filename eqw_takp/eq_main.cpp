@@ -117,18 +117,18 @@ DDPIXELFORMAT GetPixelFormat(void) {
   return format;
 }
 
-HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
+HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
                                       LPDIRECTDRAWSURFACE* lplpDDSurface, IUnknown* pUnkOuter);
 
 // Fix up the surface descriptors to play nice with windowed mode.
-HRESULT CreatePrimarySurface(IDirectDraw* lplpDD) {
+HRESULT CreatePrimarySurface(IDirectDraw* lpDD) {
   DDSURFACEDESC surface_desc;
   ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));
   surface_desc.dwSize = sizeof(DDSURFACEDESC);
   surface_desc.dwFlags = DDSD_CAPS;
   surface_desc.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
   surface_desc.ddpfPixelFormat = GetPixelFormat();
-  HRESULT result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lplpDD, &surface_desc, &primary_surface_,
+  HRESULT result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lpDD, &surface_desc, &primary_surface_,
                                                                         NULL);  // create the primary surface
 
   if (!SUCCEEDED(result)) {
@@ -140,7 +140,7 @@ HRESULT CreatePrimarySurface(IDirectDraw* lplpDD) {
 }
 
 // Create a backbuffer to ensure GetAttachedSurface() doesn't fail.
-HRESULT CreateSecondarySurface(IDirectDraw* lplpDD) {
+HRESULT CreateSecondarySurface(IDirectDraw* lpDD) {
   DDSURFACEDESC surface_desc;
   ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));
   surface_desc.dwSize = sizeof(DDSURFACEDESC);
@@ -149,27 +149,27 @@ HRESULT CreateSecondarySurface(IDirectDraw* lplpDD) {
   surface_desc.dwWidth = kClientWidth;
   surface_desc.dwHeight = kClientHeight;
   surface_desc.ddpfPixelFormat = GetPixelFormat();
-  HRESULT result =
-      hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lplpDD, &surface_desc, &secondary_surface_, NULL);
+  HRESULT result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lpDD, &surface_desc, &secondary_surface_, NULL);
   if (!SUCCEEDED(result)) Logger::Error("EqMain: Secondary Surface Creation Failed with HRESULT: 0x%x", (DWORD)result);
   return result;
 }
 
-HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
+HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
                                       LPDIRECTDRAWSURFACE* lplpDDSurface, IUnknown* pUnkOuter) {
   if (lpDDSurfaceDesc == nullptr || lplpDDSurface == nullptr) return E_POINTER;
 
   HRESULT result = E_FAIL;
 
   // The primary surface gets patched up for windowed mode including an extra backbuffer secondary surface.
+  // The default primary surface parameters just set the dwBackBufferCount to 1 and the dwCaps to 0xa18.
   if ((lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE) && (lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_FLIP) &&
       (lpDDSurfaceDesc->dwFlags & DDSD_CAPS) && (lpDDSurfaceDesc->dwFlags & DDSD_BACKBUFFERCOUNT) &&
       lpDDSurfaceDesc->dwBackBufferCount == 1) {
-    if (SUCCEEDED(CreatePrimarySurface(lplpDD)) && SUCCEEDED(CreateSecondarySurface(lplpDD))) {
+    if (SUCCEEDED(CreatePrimarySurface(lpDD)) && SUCCEEDED(CreateSecondarySurface(lpDD))) {
       InstallDirectDrawSurfaceHooks(primary_surface_);
       InstallDirectDrawSurfaceHooks(secondary_surface_);
-      LPDIRECTDRAWCLIPPER lpClipper;
-      lplpDD->CreateClipper(0, &lpClipper, NULL);
+      LPDIRECTDRAWCLIPPER lpClipper;  // Clipper needed to play nice with other windows.
+      lpDD->CreateClipper(0, &lpClipper, NULL);
       lpClipper->SetHWnd(0, hwnd_);
       RECT clipRect = {0, 0, kClientWidth, kClientHeight};
       primary_surface_->SetClipper(lpClipper);
@@ -194,23 +194,26 @@ HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDS
     surface_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
   }
 
-  result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lplpDD, &surface_desc, lplpDDSurface, pUnkOuter);
+  result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lpDD, &surface_desc, lplpDDSurface, pUnkOuter);
   if (!SUCCEEDED(result)) Logger::Error("EqMain: Surface Creation Failed with HRESULT: 0x%x", (DWORD)result);
 
   return result;
 }
 
-// Override the results with the pixel format of our re-used eqw window.
-HRESULT WINAPI DDrawGetDisplayModeHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc) {
-  Logger::Info("EqMain: Get display mode");
-  HRESULT result = hook_GetDisplayMode_.original(DDrawGetDisplayModeHook)(lplpDD, lpDDSurfaceDesc);
+// Override the results with the pixel format of our re-used eqw window instead of the full screen.
+HRESULT WINAPI DDrawGetDisplayModeHook(IDirectDraw* lpDD, LPDDSURFACEDESC lpDDSurfaceDesc) {
+  Logger::Info("EqMain: Overriding DDraw GetDisplayMode");
+  HRESULT result = hook_GetDisplayMode_.original(DDrawGetDisplayModeHook)(lpDD, lpDDSurfaceDesc);
   lpDDSurfaceDesc->ddpfPixelFormat = GetPixelFormat();
   return result;
 }
 
-// Clean up any extra custom resources.
-ULONG WINAPI DDrawReleaseHook(IDirectDraw* lplpDD) {
-  Logger::Info("EqMain: DDrawRelease 0x%x", (DWORD)lplpDD);
+// Clean up any extra custom resources and null our references.
+ULONG WINAPI DDrawReleaseHook(IDirectDraw* lpDD) {
+  if (dd_ != lpDD)
+    Logger::Error("EqMain: Unexpected DDrawRelease: 0x%08x vs 0x%08x", (DWORD)dd_, (DWORD)lpDD);
+  else
+    Logger::Info("EqMain: DDrawRelease: 0x%08x", (DWORD)lpDD);
 
   dd_ = nullptr;               // Released below.
   primary_surface_ = nullptr;  // Released by eqmain/ddraw.
@@ -220,41 +223,40 @@ ULONG WINAPI DDrawReleaseHook(IDirectDraw* lplpDD) {
   if (secondary_surface_) secondary_surface_->Release();
   secondary_surface_ = nullptr;
 
-  int ref_count = hook_DDrawRelease_.original(DDrawReleaseHook)(lplpDD);
+  int ref_count = hook_DDrawRelease_.original(DDrawReleaseHook)(lpDD);
   if (ref_count != 0) Logger::Error("EqMain: DDraw is leaking with ref count: %d", ref_count);
   return ref_count;
 }
 
-// Block any changes to our fixed 640x480 and Bpp.
-HRESULT WINAPI DDrawSetDisplayModeHook(IDirectDraw* lplpDD, DWORD dwWidth, DWORD dwHeight, DWORD dwBpp) {
-  Logger::Info("EqMain: Blocked SetDisplayMode %d x %d %d", dwWidth, dwHeight, dwBpp);
+// Block the attempt to set the monitor to a full screen display mode (we use windows).
+HRESULT WINAPI DDrawSetDisplayModeHook(IDirectDraw* lpDD, DWORD dwWidth, DWORD dwHeight, DWORD dwBpp) {
+  Logger::Info("EqMain: Blocked DDraw SetDisplayMode %d x %d %d", dwWidth, dwHeight, dwBpp);
   return DD_OK;
 }
 
 // Hook the cooperative level to always be in non-exclusive normal windowed mode.
-HRESULT WINAPI DDrawSetCooperativeLevelHook(IDirectDraw* lplpDD, HWND hWnd, DWORD dwFlags) {
-  Logger::Info("EqMain: DDraw overriding SetCooperativeLevel");
-  HRESULT res = hook_SetCooperativeLevel_.original(DDrawSetCooperativeLevelHook)(lplpDD, hWnd, DDSCL_NORMAL);
+HRESULT WINAPI DDrawSetCooperativeLevelHook(IDirectDraw* lpDD, HWND hWnd, DWORD dwFlags) {
+  Logger::Info("EqMain: Overriding DDraw SetCooperativeLevel (%d to %d)", dwFlags, DDSCL_NORMAL);
+  HRESULT res = hook_SetCooperativeLevel_.original(DDrawSetCooperativeLevelHook)(lpDD, hWnd, DDSCL_NORMAL);
   if (res != DD_OK) Logger::Error("EqMain: Error setting cooperative level: %d", res);
   return res;
 }
 
-HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lplpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
-                                      LPDIRECTDRAWSURFACE FAR* lplpDDSurface, IUnknown FAR* pUnkOuter);
-
 // Hooks the create so it can install the required vtable hooks.
 HRESULT WINAPI DDrawDirectDrawCreateHook(GUID FAR* lpGUID, LPDIRECTDRAW* lplpDD, IUnknown FAR* pUnkOuter) {
-  Logger::Info("EqMain: DirectDraw Create 0x%x 0x%x 0x%x", (DWORD)lpGUID, (DWORD)lplpDD, (DWORD)pUnkOuter);
   HRESULT rval = hook_DirectDrawCreate_.original(DDrawDirectDrawCreateHook)(lpGUID, lplpDD, pUnkOuter);
   dd_ = *lplpDD;
 
-  if (lplpDD) {
+  if (SUCCEEDED(rval) && dd_) {
+    Logger::Info("EqMain: DDrawCreated: 0x%08x", (DWORD)dd_);
     void** vtable = *(void***)dd_;
     hook_DDrawRelease_ = VTableHook(vtable, 2, DDrawReleaseHook);
     hook_CreateSurface_ = VTableHook(vtable, 6, DDrawCreateSurfaceHook);
     hook_GetDisplayMode_ = VTableHook(vtable, 12, DDrawGetDisplayModeHook);
     hook_SetDisplayMode_ = VTableHook(vtable, 21, DDrawSetDisplayModeHook);
     hook_SetCooperativeLevel_ = VTableHook(vtable, 20, DDrawSetCooperativeLevelHook);
+  } else {
+    Logger::Error("EqMain: DDrawCreate failed: %d", rval);
   }
   return rval;
 }
@@ -294,7 +296,7 @@ void UpdateWinSizeFromFixedClientSize(HWND hwnd) {
   win_width_ = win_rect.right - win_rect.left;
   win_height_ = win_rect.bottom - win_rect.top;
 
-  Logger::Info("EqMain: Wnd: 0x%x, (%d x %d)", (DWORD)hwnd, win_width_, win_height_);
+  Logger::Info("EqMain: Wnd: 0x%08x, (%d x %d)", (DWORD)hwnd, win_width_, win_height_);
 }
 
 // This specialized WndProc is installed to intercept messages to our shared window while EqMain's

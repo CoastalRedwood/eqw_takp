@@ -243,3 +243,9 @@ void DInputManager::Unacquire() {
   if (DInput::mouse_) DInput::mouse_->Unacquire();
   if (DInput::keyboard_) DInput::keyboard_->Unacquire();
 }
+
+void DInputManager::FlushMouse() {
+  if (!DInput::mouse_) return;
+  DWORD items = INFINITE;  // Perform a flush of any stale data.
+  DInput::DeviceGetDeviceDataHook(DInput::mouse_, sizeof(DIDEVICEOBJECTDATA), NULL, &items, 0);
+}
