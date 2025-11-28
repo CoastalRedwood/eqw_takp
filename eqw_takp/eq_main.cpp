@@ -67,19 +67,34 @@ VTableHook hook_GetAttachedSurface_;
 
 // Internal methods.
 
-// Explict bitblit copy from the backbuffer secondary surface to the primary client surface.
+// Perform an explict bitblit copy from the secondary to the primary (instead of a buffer toggle) for windowed mode.
 HRESULT WINAPI DDrawSurfaceFlipHook(IDirectDrawSurface* surface, IDirectDrawSurface* surface2, DWORD flags) {
+  static bool success_report = false;
   static bool error_logged = false;
-  HRESULT result = dd_ ? dd_->WaitForVerticalBlank(1, hwnd_) : DD_OK;
-  if (!(secondary_surface_->IsLost() == DDERR_SURFACELOST) && !(primary_surface_->IsLost() == DDERR_SURFACELOST)) {
-    RECT srcRect = {0, 0, kClientWidth, kClientHeight};
-    RECT destRect = client_rect_;
-    HRESULT result = surface->Blt(&destRect, secondary_surface_, &srcRect, DDBLT_WAIT, nullptr);
-    *surface = *secondary_surface_;
-    error_logged = false;
-  } else if (!error_logged) {
-    error_logged = true;
-    Logger::Error("EqMain: Lost a surface. Blt was skipped.");
+  HRESULT result = DD_OK;
+  if (secondary_surface_->IsLost() == DDERR_SURFACELOST || primary_surface_->IsLost() == DDERR_SURFACELOST) {
+    if (!error_logged) {
+      error_logged = true;  // Just report errors once until success.
+      Logger::Error("EqMain: Lost a surface. Blt was skipped.");
+    }
+    return DDERR_SURFACELOST;
+  }
+
+  RECT srcRect = {0, 0, kClientWidth, kClientHeight};
+  RECT destRect = client_rect_;
+  result = surface->Blt(&destRect, secondary_surface_, &srcRect, DDBLT_WAIT, nullptr);
+  if (FAILED(result)) {
+    if (!error_logged) {
+      error_logged = true;
+      Logger::Error("EqMain: Blt DDraw failed: 0x%x", result);
+    }
+    return result;
+  }
+
+  error_logged = false;
+  if (!success_report) {
+    success_report = true;  // Just report once.
+    Logger::Info("EqMain: DDraw blt succeeded");
   }
   return result;
 }
@@ -154,45 +169,78 @@ HRESULT CreateSecondarySurface(IDirectDraw* lpDD) {
   return result;
 }
 
+// Need to add a clipper to the primary surface to play nice with other windows.
+HRESULT AddClipper(IDirectDraw* lpDD) {
+  LPDIRECTDRAWCLIPPER lpClipper;
+  HRESULT result = lpDD->CreateClipper(0, &lpClipper, NULL);
+  if (FAILED(result)) {
+    Logger::Error("EqMain:: DDraw createclipper failed: %d", result);
+    return result;
+  }
+
+  result = DD_OK;
+  if (FAILED(lpClipper->SetHWnd(0, hwnd_)) || FAILED(primary_surface_->SetClipper(lpClipper))) {
+    Logger::Error("EqMain: Error configuring DDraw clipper");
+    result = E_FAIL;
+  }
+  lpClipper->Release();
+
+  return result;
+}
+
+// The eqmain code expects the ddraw surface to be operating in full screen mode with
+// a backbuffer and expects to use the flip() to display updates. That is not supported
+// by ddraw in windowed mode, so we manually emulate it by creating our own backbuffer
+// and our own flip routine.
+HRESULT CreatePrimarySurfaces(IDirectDraw* lpDD, LPDDSURFACEDESC lpDDSurfaceDesc) {
+  // First sanity check that eqmain is trying to create what we expect (no hacked mods).
+  static const DWORD dwFlags = DDSD_BACKBUFFERCOUNT | DDSD_CAPS;
+  static const DWORD dwCaps = DDSCAPS_SYSTEMMEMORY | DDSCAPS_PRIMARYSURFACE | DDSCAPS_FLIP | DDSCAPS_COMPLEX;
+  if (lpDDSurfaceDesc->dwFlags != dwFlags || lpDDSurfaceDesc->ddsCaps.dwCaps != dwCaps ||
+      lpDDSurfaceDesc->dwBackBufferCount != 1) {
+    Logger::Error("EqMain: DDraw primary surface has unexpected parameters");
+    return E_FAIL;
+  }
+
+  HRESULT result = CreatePrimarySurface(lpDD);
+  if (FAILED(result)) return result;
+
+  result = CreateSecondarySurface(lpDD);  // Extra surface to support a backbuffer.
+  if (FAILED(result)) return result;      // Note: Not bothering to release primary if failed.
+
+  InstallDirectDrawSurfaceHooks(primary_surface_);
+  InstallDirectDrawSurfaceHooks(secondary_surface_);
+
+  result = AddClipper(lpDD);
+  if (FAILED(result)) return result;  // Note: Not bothering to release surfaces if failed.
+
+  Logger::Info("EqMain: Surfaces created!");
+  return DD_OK;
+}
+
+// Hook the create surface to support windowed mode.
 HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lpDD, LPDDSURFACEDESC lpDDSurfaceDesc,
                                       LPDIRECTDRAWSURFACE* lplpDDSurface, IUnknown* pUnkOuter) {
   if (lpDDSurfaceDesc == nullptr || lplpDDSurface == nullptr) return E_POINTER;
 
   HRESULT result = E_FAIL;
 
-  // The primary surface gets patched up for windowed mode including an extra backbuffer secondary surface.
-  // The default primary surface parameters just set the dwBackBufferCount to 1 and the dwCaps to 0xa18.
-  if ((lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE) && (lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_FLIP) &&
-      (lpDDSurfaceDesc->dwFlags & DDSD_CAPS) && (lpDDSurfaceDesc->dwFlags & DDSD_BACKBUFFERCOUNT) &&
-      lpDDSurfaceDesc->dwBackBufferCount == 1) {
-    if (SUCCEEDED(CreatePrimarySurface(lpDD)) && SUCCEEDED(CreateSecondarySurface(lpDD))) {
-      InstallDirectDrawSurfaceHooks(primary_surface_);
-      InstallDirectDrawSurfaceHooks(secondary_surface_);
-      LPDIRECTDRAWCLIPPER lpClipper;  // Clipper needed to play nice with other windows.
-      lpDD->CreateClipper(0, &lpClipper, NULL);
-      lpClipper->SetHWnd(0, hwnd_);
-      RECT clipRect = {0, 0, kClientWidth, kClientHeight};
-      primary_surface_->SetClipper(lpClipper);
-      lpClipper->Release();
-      Logger::Info("EqMain: Surfaces created!");
-      *lplpDDSurface = primary_surface_;
-      return DD_OK;
-    } else
-      return E_FAIL;
+  // The primary surface requires significant modifications to work in windowed mode properly.
+  if (lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE) {
+    result = CreatePrimarySurfaces(lpDD, lpDDSurfaceDesc);
+    *lplpDDSurface = (SUCCEEDED(result)) ? primary_surface_ : nullptr;
+    return result;
   }
 
   // Other surfaces just get some light description patching for windowed mode.
   DDSURFACEDESC surface_desc;
-  ZeroMemory(&surface_desc, sizeof(DDSURFACEDESC));
   memcpy(&surface_desc, lpDDSurfaceDesc, sizeof(DDSURFACEDESC));
 
-  if (!(surface_desc.ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE)) {
-    if (!(surface_desc.dwFlags & DDSD_PIXELFORMAT)) {
-      surface_desc.dwFlags |= DDSD_PIXELFORMAT;
-      surface_desc.ddpfPixelFormat = GetPixelFormat();
-    }
-    surface_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
+  if (!(surface_desc.dwFlags & DDSD_PIXELFORMAT)) {
+    surface_desc.dwFlags |= DDSD_PIXELFORMAT;
+    surface_desc.ddpfPixelFormat = GetPixelFormat();
   }
+  surface_desc.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
 
   result = hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lpDD, &surface_desc, lplpDDSurface, pUnkOuter);
   if (!SUCCEEDED(result)) Logger::Error("EqMain: Surface Creation Failed with HRESULT: 0x%x", (DWORD)result);
