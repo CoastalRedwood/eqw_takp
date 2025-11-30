@@ -128,7 +128,8 @@ Only 32-bit video modes were tested.
    - w/out d3d.dll: black screen (but game is running in background with sounds and ui)
    - Functional after installing `The Microsoft DirectX End-User Runtime`
  - dgvoodoo:
-   - Crashes char select -> login w/out ever entering world (dx 6.0 error dialog, same as old eqw)
-   - It is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)
-   - Without dgvoodoo ddraw.dll it hangs with a black screen trying to go back into eqmain
-
+   - Does not resolve the existing crash when going from login to char select and back w/out entering world
+     - It is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)
+     - d3d8to8 does not have this issue
+   - Some systems require the updated `ddraw.dll` from the dgVoodoo package or eqmain (login)
+     will fail with a black screen
