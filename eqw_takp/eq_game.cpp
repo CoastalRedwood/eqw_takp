@@ -4,6 +4,7 @@
 #include <shellapi.h>  // For ExtractIconExA
 #include <windows.h>
 
+#include <algorithm>
 #include <filesystem>
 
 #include "cpu_timestamp_fix.h"
@@ -155,11 +156,12 @@ void SetClientSize(int client_width, int client_height, bool use_startup = false
                                          : (std::to_string(client_width) + "by" + std::to_string(client_height));
   int x = Ini::GetValue<int>("EqwOffsets", setting_stem + "X", -32768, ini_path_.string().c_str());
   int y = Ini::GetValue<int>("EqWOffsets", setting_stem + "Y", -32768, ini_path_.string().c_str());
-  bool valid_offset = (x != -32768 && y != -32768);
+  bool valid_offset = (x > -16384 && y > -16384);  // Very loose sanity check. Client game res < 16k max.
 
   // Then use that to retrieve the relevant monitor info.
-  HMONITOR monitor = valid_offset ? ::MonitorFromPoint(POINT(x, y), MONITOR_DEFAULTTONEAREST)
-                                  : ::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+  HMONITOR monitor =
+      valid_offset ? ::MonitorFromPoint(POINT(x + client_width / 2, y + client_height / 2), MONITOR_DEFAULTTONEAREST)
+                   : ::MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
   MONITORINFO monitor_info;
   monitor_info.cbSize = sizeof(monitor_info);
   RECT full_rect(0, 0, client_width + 100, client_height + 100);  // Fallback monitor size.
@@ -190,7 +192,14 @@ void SetClientSize(int client_width, int client_height, bool use_startup = false
     x = (full_width - width) / 2;  // Calculate centered defaults.
     y = (full_height - height) / 2;
   }
-  y = (y >= -20) ? y : -20;  // Clamp so title bar always remains accessible.
+
+  // Clamp x and y so it always remains visible on the target monitor.
+  int x_min = full_rect.left - width + 256;  // Show at least 256 pixels on right side.
+  int x_max = full_rect.right - 256;         // Show at least 256 pixels on left side.
+  x = std::clamp(x, x_min, x_max);
+  int y_min = full_rect.top - 20;      // Keep title bar accessible.
+  int y_max = full_rect.bottom - 256;  // Keep title bar accessible above taskbar etc.
+  y = std::clamp(y, y_min, y_max);
   Logger::Info("EqGame: Set window position: %d %d %d x %d", x, y, width, height);
   win_width_ = width;  // Cache the final sizes for locking it down.
   win_height_ = height;
@@ -268,8 +277,8 @@ void PaintIcon(HWND hwnd) {
 }
 
 // Updates the stored window offsets for the active window.
-void StoreWindowOffsets() {
-  if (full_screen_mode_ || !IsGameInGameState()) return;
+void StoreWindowOffsets(HWND hwnd) {
+  if (hwnd != hwnd_ || full_screen_mode_ || !IsGameInGameState() || ::IsIconic(hwnd_)) return;
 
   RECT rect;
   if (!::GetWindowRect(hwnd_, &rect)) return;
@@ -322,7 +331,7 @@ LRESULT CALLBACK GameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     }
 
     case WM_WINDOWPOSCHANGED:
-      StoreWindowOffsets();
+      StoreWindowOffsets(hwnd);
       return 0;
 
     case WM_DPICHANGED:
