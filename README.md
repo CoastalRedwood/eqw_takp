@@ -34,7 +34,7 @@ directly from the repo source, providing full transparency on the release conten
     - Note: Browsers may complain about downloading a dll from a website. See comment at top that
       the dll content is entirely transparent and compiled directly on github.
   - Install (copy over) a compatible (updated) eqgame.dll file
-  - If using Zeal a version newer than 1.3.0-beta2 is required for lmb panning to function
+  - If using Zeal a version newer than 1.3.0 is required for lmb panning to function
   - Review the Settings section below if any desire to modify defaults
     - First run the game once to populate defaults and then modify
   - See compatibility notes below for dgvoodoo or d3d8tod9
@@ -115,21 +115,18 @@ Only 32-bit video modes were tested.
 
 ## Known issues
 
-### Features / polishing
-- Transition glitches
-   - Some dirty screens are briefly flashed to/from char select
-
 ### HW compatibility (comments will be system dependent)
  - d3d8to9 d3d8.dll:
    - NVidia fps limiter is not functional (Zeal version works fine)
    - Loading screen progress bar and text are not updating
    - The presence of the dgvoodoo ddraw.dll results in a black game screen
+   - Performance appears to be much lower than dgVoodoo
  - intel integrated laptop gpu:
-   - w/out d3d.dll: black screen (but game is running in background with sounds and ui)
+   - w/out d3d8.dll: black screen (but game is running in background with sounds and ui)
    - Functional after installing `The Microsoft DirectX End-User Runtime`
  - dgvoodoo:
    - Does not resolve the existing crash when going from login to char select and back w/out entering world
-     - It is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)
+     - That crash is failing a DirectDrawCreate() inside an early eqmain quality check (dx 6.0 error)
      - d3d8to8 does not have this issue
    - Some systems require the updated `ddraw.dll` from the dgVoodoo package or eqmain (login)
      will fail with a black screen
