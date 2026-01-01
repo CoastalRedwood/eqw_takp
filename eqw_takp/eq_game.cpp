@@ -413,6 +413,7 @@ void InitializeIniFilename() {
   ini_path_ = exe_path_.parent_path() / "eqclient.ini";
 }
 
+// Initializes the DPI awareness to prevent monitor dependent scaling / stretching.
 void InitializeDpiAware() {
   auto disable_dpi = Ini::GetValue<bool>("EqwGeneral", "DisableDpiAware", false, ini_path_.string().c_str());
   if (disable_dpi) {
@@ -420,13 +421,40 @@ void InitializeDpiAware() {
     return;
   }
 
+  // To maximize compatibility, try to dynamically load the DPI functions.
+  HMODULE hUser32 = ::GetModuleHandleA("user32.dll");
+  if (hUser32 == NULL) {
+    Logger::Error("EqGame: Failed to access user32.dll to set dpi aware");
+    return;
+  }
+
+  typedef BOOL(WINAPI * SetProcessDpiAwarenessContextFunc)(DPI_AWARENESS_CONTEXT value);
+  auto set_dpi_awareness_fn =
+      (SetProcessDpiAwarenessContextFunc)GetProcAddress(hUser32, "SetProcessDpiAwarenessContext");
+  if (set_dpi_awareness_fn == NULL) {
+    Logger::Error("EqGame: The user32.dll does not support setting DPI context. Skipping");
+    return;
+  }
+
   // We set MONITOR_AWARE and not MONITOR_AWARE_V2 so we don't have to worry about the window sizes
   // changing due to non-client elements. This avoids the need for some later OS dpi aware calls.
-  if (!::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE))
-    Logger::Error("EqGame: Failed to set dpi aware: 0x%08x", ::GetLastError());
+  if (!set_dpi_awareness_fn(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE))
+    Logger::Error("EqGame: Failed to set dpi awareness context: 0x%08x", ::GetLastError());
 
-  Logger::Info("EqGame: Active dpi_awareness: %d",
-               ::GetAwarenessFromDpiAwarenessContext(::GetDpiAwarenessContextForProcess(NULL)));
+  typedef DPI_AWARENESS_CONTEXT(WINAPI * GetDpiAwarenessContextForProcessFunc)(HANDLE hProcess);
+  auto get_awareness_context_fn =
+      (GetDpiAwarenessContextForProcessFunc)GetProcAddress(hUser32, "GetDpiAwarenessContextForProcess");
+
+  typedef DPI_AWARENESS(WINAPI * GetAwarenessFromDpiAwarenessContextFunc)(DPI_AWARENESS_CONTEXT value);
+  auto get_awareness_fn =
+      (GetAwarenessFromDpiAwarenessContextFunc)GetProcAddress(hUser32, "GetAwarenessFromDpiAwarenessContext");
+
+  if (get_awareness_context_fn == NULL || get_awareness_fn == NULL) {
+    Logger::Error("EqGame: The user32.dll does not support querying DPI context. Skipping");
+    return;
+  }
+
+  Logger::Info("EqGame: Active dpi_awareness: %d", get_awareness_fn(get_awareness_context_fn(NULL)));
 }
 
 }  // namespace
