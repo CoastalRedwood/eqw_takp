@@ -100,10 +100,14 @@ void CreateEqWindow() {
   ::AdjustWindowRectEx(&rect, dwstyle, FALSE, 0);
   win_width_ = rect.right - rect.left;
   win_height_ = rect.bottom - rect.top;
-  int x = (::GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
-  int y = (::GetSystemMetrics(SM_CYSCREEN) - win_height_) / 2;
-  x = Ini::GetValue<int>("EqwOffsets", std::string(kIniLoginOffset) + "X", x, ini_path_.string().c_str());
-  y = Ini::GetValue<int>("EqWOffsets", std::string(kIniLoginOffset) + "Y", y, ini_path_.string().c_str());
+  int center_x = (::GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
+  int center_y = (::GetSystemMetrics(SM_CYSCREEN) - win_height_) / 2;
+  int x = Ini::GetValue<int>("EqwOffsets", std::string(kIniLoginOffset) + "X", center_x, ini_path_.string().c_str());
+  int y = Ini::GetValue<int>("EqWOffsets", std::string(kIniLoginOffset) + "Y", center_y, ini_path_.string().c_str());
+  if (x < -win_width_ / 2 || y < -20) {
+    x = center_x;
+    y = center_y;
+  }
 
   hwnd_ = ::CreateWindowExA(dwexstyle, wc.lpszClassName, "EqW-TAKP", dwstyle, x, y, win_width_, win_height_, NULL, NULL,
                             NULL, NULL);
@@ -156,7 +160,7 @@ void SetClientSize(int client_width, int client_height, bool use_startup = false
                                          : (std::to_string(client_width) + "by" + std::to_string(client_height));
   int x = Ini::GetValue<int>("EqwOffsets", setting_stem + "X", -32768, ini_path_.string().c_str());
   int y = Ini::GetValue<int>("EqWOffsets", setting_stem + "Y", -32768, ini_path_.string().c_str());
-  bool valid_offset = (x > -16384 && y > -16384);  // Very loose sanity check. Client game res < 16k max.
+  bool valid_offset = (x > -client_width / 2 && y > -20);  // Sanity check to keep on screen.
 
   // Then use that to retrieve the relevant monitor info.
   HMONITOR monitor =
@@ -282,9 +286,10 @@ void StoreWindowOffsets(HWND hwnd) {
 
   RECT rect;
   if (!::GetWindowRect(hwnd_, &rect)) return;
-  rect.top = (rect.top > -20) ? rect.top : -20;             // Clamp top so the titlebar is always accessible.
-  int client_width = *reinterpret_cast<int*>(0x00798564);   // Game global screen x resolution.
-  int client_height = *reinterpret_cast<int*>(0x00798568);  // Game global screen y resolution.
+
+  int client_width = *reinterpret_cast<int*>(0x00798564);       // Game global screen x resolution.
+  int client_height = *reinterpret_cast<int*>(0x00798568);      // Game global screen y resolution.
+  if (rect.left < -client_width / 2 || rect.top < -20) return;  // Bail out if any suspicious values.
 
   // Update the ini if needed.
   std::string resolution = std::to_string(client_width) + "by" + std::to_string(client_height);

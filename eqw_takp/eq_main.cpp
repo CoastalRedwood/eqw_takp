@@ -426,10 +426,16 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
   UpdateWinSizeFromFixedClientSize(hwnd_);
 
   // Calculate centered defaults and then try to retrieve ini settings.
-  X = (GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
-  Y = (GetSystemMetrics(SM_CYSCREEN) - win_height_) / 2;
-  X = Ini::GetValue<int>("EqwOffsets", kIniLoginOffsetX, X, ini_path_.string().c_str());
-  Y = Ini::GetValue<int>("EqWOffsets", kIniLoginOffsetY, Y, ini_path_.string().c_str());
+  int center_X = (GetSystemMetrics(SM_CXSCREEN) - win_width_) / 2;
+  int center_Y = (GetSystemMetrics(SM_CYSCREEN) - win_height_) / 2;
+  X = Ini::GetValue<int>("EqwOffsets", kIniLoginOffsetX, center_X, ini_path_.string().c_str());
+  Y = Ini::GetValue<int>("EqWOffsets", kIniLoginOffsetY, center_Y, ini_path_.string().c_str());
+
+  // Go back to center if fails a sanity check (the ini values can get set to -32000 if minimized).
+  if (X < -kClientWidth / 2 || Y < -20) {
+    X = center_X;
+    Y = center_Y;
+  }
 
   SetWindowPos(hwnd_, 0, X, Y, win_width_, win_height_, 0);
   UpdateClientRegion(hwnd_);
@@ -442,7 +448,10 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
 // Updates the stored window offsets for the active window.
 void StoreWindowOffsets() {
   RECT rect;
-  if (!::GetWindowRect(hwnd_, &rect)) return;
+  if (!::GetWindowRect(hwnd_, &rect) || ::IsIconic(hwnd_)) return;
+
+  // There was a bug reported (before the IsIconic() check above) where it stored -32000.
+  if (rect.left < -4000 || rect.top < -20) return;  // Sanity check to prevent storing bad values.
 
   // Update the ini if needed.
   int left = Ini::GetValue<int>("EqwOffsets", kIniLoginOffsetX, 0, ini_path_.string().c_str());
