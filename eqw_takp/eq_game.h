@@ -6,7 +6,7 @@
 
 namespace EqGame {
 static constexpr char kVersionStr[] =
-    "1.0.0"
+    "1.0.1"
     " (" __DATE__ " " __TIME__ ")";
 
 void Initialize();
