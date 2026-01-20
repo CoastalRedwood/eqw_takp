@@ -19,7 +19,7 @@
 namespace DInputManager {
 
 void Initialize(HMODULE handle);
-void SetBackgroundMode(bool background_mode);  // Set during eqmain.
+void SetIgnorePrioInAcquire(bool ignore_prio_result);  // Set during eqmain.
 void Acquire(bool keyboard_only = false);
 void Unacquire();
 void FlushMouse();
