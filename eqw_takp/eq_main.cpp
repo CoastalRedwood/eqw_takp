@@ -440,7 +440,7 @@ HWND WINAPI User32CreateWindowExAHook(DWORD dwExStyle, LPCSTR lpClassName, LPCST
   SetWindowPos(hwnd_, 0, X, Y, win_width_, win_height_, 0);
   UpdateClientRegion(hwnd_);
 
-  DInputManager::SetBackgroundMode(true);  // eqmain.dll will crash if keyboard acquire fails.
+  DInputManager::SetIgnorePrioInAcquire(true);  // eqmain.dll throws a fatal error if keyboard acquire fails.
 
   return hwnd_;
 }
@@ -470,7 +470,7 @@ BOOL WINAPI User32DestroyWindowHook(HWND hwnd) {
   eqmain_wndproc_ = nullptr;
   ::SetWindowLongA(hwnd_, GWL_WNDPROC, (LONG)original_wndproc_);
 
-  DInputManager::SetBackgroundMode(false);  // Let eqgame.exe run in foreground only mode.
+  DInputManager::SetIgnorePrioInAcquire(false);  // eqgame.exe can handle sharing keyboard dinput access.
 
   return true;
 }

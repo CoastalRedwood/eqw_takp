@@ -13,7 +13,7 @@
 namespace DInput {
 namespace {  // anonymous
 
-bool enable_background_mode_ = false;
+bool ignore_prio_result = false;
 
 // Allocated DirectInput hardware resources.
 LPDIRECTINPUT8 dinput_ = nullptr;
@@ -86,6 +86,8 @@ HRESULT WINAPI DeviceAcquireHook(LPDIRECTINPUTDEVICE8W device) {
     DeviceGetDeviceDataHook(device, sizeof(DIDEVICEOBJECTDATA), NULL, &items, 0);
   } else if (result != S_FALSE && result != DIERR_OTHERAPPHASPRIO) {
     Logger::Error("Error acquiring %s: %d", GetDeviceStr(device), result);
+  } else if (result == DIERR_OTHERAPPHASPRIO && device == keyboard_ && ignore_prio_result) {
+    result = DI_OK;  // Suppress the failure to avoid a fatal error in eqmain.dll.
   }
 
   return result;
@@ -117,11 +119,10 @@ HRESULT WINAPI DeviceGetDeviceStateHook(LPDIRECTINPUTDEVICE8W device, size_t buf
 // Override the cooperative level to make the DInput play nice in windowed mode.
 HRESULT WINAPI DeviceSetCooperativeLevelHook(LPDIRECTINPUTDEVICE8W device, HWND wnd, DWORD flags) {
   // The client varies in how it handles failures to acquire the devices. The eqmain.dll only acquires
-  // the keyboard but it throws fatal errors if that fails, so we use the BACKGROUND mode to always
-  // enable the keyboard to be acquired. However eqclient includes logic to try and reacquire the
-  // device whenenever it initially fails to retrieve data, so it can support FOREGROUND mode.
-  flags = enable_background_mode_ ? DISCL_BACKGROUND : DISCL_FOREGROUND;
-  flags |= DISCL_NONEXCLUSIVE;
+  // the keyboard but it throws fatal errors if that fails. Both include logic to try and reacquire the
+  // device whenenever it initially fails to retrieve data, so they can support FOREGROUND mode, but
+  // we have to override the acquire result in eqmain.dll to falsely report success.
+  flags = DISCL_FOREGROUND | DISCL_NONEXCLUSIVE;
 
   Logger::Info("DInput %s coop level set to 0x%x", GetDeviceStr(device), flags);
   if (device == keyboard_)
@@ -227,10 +228,10 @@ void DInputManager::Initialize(HMODULE handle) {
   DInput::hook_DirectInput_ = IATHook(handle, "dinput8.dll", "DirectInput8Create", DInput::DirectInput8CreateHook);
 }
 
-// Support enabling background mode during eqmain which will crash out if the acquire fails.
-void DInputManager::SetBackgroundMode(bool background_mode) {
-  Logger::Info("DInput background mode: %d", background_mode);
-  DInput::enable_background_mode_ = background_mode;
+// Support ignoring DIERR_OTHERAPPHASPRIO result in eqmain which throws a fatal error if the acquire fails.
+void DInputManager::SetIgnorePrioInAcquire(bool ignore_prio_result) {
+  Logger::Info("DInput ignore prio mode: %d", ignore_prio_result);
+  DInput::ignore_prio_result = ignore_prio_result;
 }
 
 // Manual methods to acquire and unacquire the devices.  Note that eqmain only creates the keyboard.
