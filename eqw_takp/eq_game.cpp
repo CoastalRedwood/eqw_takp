@@ -220,7 +220,9 @@ HMODULE WINAPI Kernel32LoadLibraryAHook(LPCSTR lpLibFileName) {
       EqMain::Initialize(hmod, hwnd_, ini_path_, eqmain_init_fn_);
     }
     if (!_stricmp(lpLibFileName, "eqgfx_dx8.dll")) {
-      EqGfx::Initialize(hmod, eqgfx_init_fn_, [](int width, int height) { SetClientSize(width, height); });
+      bool enable_gamma_ramp = Ini::GetValue<bool>("EqwGeneral", "EnableGammaRamp", false, ini_path_.string().c_str());
+      EqGfx::Initialize(hmod, enable_gamma_ramp, eqgfx_init_fn_,
+                        [](int width, int height) { SetClientSize(width, height); });
       CpuTimestampFix::Initialize(ini_path_);
     }
   }
