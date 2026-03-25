@@ -72,6 +72,11 @@ general ones are read at boot time while the offsets are written and read while 
   - **Description:** Setting `TRUE` will prevent the clearing of keydown states upon loss
                      of focus. Note that ctrl, alt, and shift are resynced upon regaining focus.
 
+- `EnableGammaRamp`
+  - **Values:** `FALSE` (default) or `TRUE`
+  - **Description:** Setting `TRUE` will enable a gamma hack similar to the legacy eqw.dll that
+                     may or may not have any effect on modern GPUs running in windowed mode.
+
 - `DebugLogLevel`
   - **Values:** `0` (default=None), `1` (Error), `2` (Info), or `3` (Debug)
   - **Description:** Setting non-zero will enable the output of an `eqw_debug.txt` with
@@ -95,8 +100,6 @@ general ones are read at boot time while the offsets are written and read while 
  - The `[VideoMode]: BitsPerPixel` value should be set to `32` (others are untested)
 
 ## Unsupported legacy EqW 2.32 features
-- Since this always runs in windowed mode, the gamma fix feature of legacy eqw 2.32 was dropped
-  - Check your updated eqgame.dll for gamma customization support
 - No hotkeys are supported (ReleaseMouse, ReloadIni, EQWSwitch)
 
 ## Direct3D8 support

@@ -5,9 +5,6 @@
 #include "logger.h"
 #include "vtable_hook.h"
 
-// Notes:
-// - This always runs in windowed mode so a custom gamma mode is not supported.
-
 // Using an EqGfxInt namespace instead of a purely static class to reduce the qualifier clutter. The
 // anonymous namespace forces it to private internal scope.
 namespace EqGfxInt {
@@ -32,7 +29,28 @@ VTableHook hook_SetGammaRamp_;  // Direct3DDevice.
 
 IDirect3DDevice8* device_ = nullptr;  // Local pointer to the allocated d3d device.
 
+// Legacy EQW Gamma support
+static bool enable_device_gamma_ramp_ = false;
+static WORD saved_device_gamma_ramp_[3][256] = {0};
+static bool gamma_ramp_saved_ = false;
+
 // Internal methods
+
+// this is a mod that was present in the original eqw, replicated here to reproduce the same effect with eqw_takp
+static void DeviceGammaSave() {
+  HDC DC = GetDC(0);
+  GetDeviceGammaRamp(DC, saved_device_gamma_ramp_);
+  ReleaseDC(0, DC);
+  gamma_ramp_saved_ = true;
+}
+
+static void DeviceGammaRestore() {
+  if (gamma_ramp_saved_) {
+    HDC DC = GetDC(0);
+    SetDeviceGammaRamp(DC, (LPVOID)saved_device_gamma_ramp_);
+    ReleaseDC(0, DC);
+  }
+}
 
 // Null our local pointer to the d3d device if the reference count drops to zero.
 HRESULT WINAPI D3DDeviceReleaseHook(IDirect3DDevice8* Device) {
@@ -51,6 +69,8 @@ HRESULT WINAPI D3DDeviceResetHook(IDirect3DDevice8* Device, D3DPRESENT_PARAMETER
   // logic in eqgame will toggle window styles as needed.
 
   Logger::Info("EqGFX: Reset: %d x %d", Parameters->BackBufferWidth, Parameters->BackBufferHeight);
+
+  DeviceGammaRestore();
 
   // Per the Nvidia "DX8_Overview.pdf", the fields below must be zero in windowed mode. It seems to work fine with
   // the BackBufferWidth and BackBufferHeight set to non-zero with the set_client_size_cb_() happening immediately
@@ -74,10 +94,20 @@ HRESULT WINAPI D3DDeviceResetHook(IDirect3DDevice8* Device, D3DPRESENT_PARAMETER
   return result;
 }
 
-// This should not have an affect in windowed mode but block it for consistency just in case of some translation layer.
+// This should not have an affect in windowed mode but with all the translation layers who knows so we
+// try to replicate the legacy eqw.dll behavior if enable_device_gamma_ramp_ is set.
 HRESULT WINAPI D3DDeviceSetGammaRampHook(IDirect3DDevice8* Device, DWORD Flags, CONST D3DGAMMARAMP* pRamp) {
-  Logger::Debug("EqGFX: Blocking SetGammaRamp: 0x%08x", Flags);
-  return D3D_OK;
+  if (enable_device_gamma_ramp_) {
+    Logger::Debug("EqGFX: Applying legacy SetGammaRamp: 0x%08x", Flags);
+    if (!gamma_ramp_saved_) DeviceGammaSave();
+    HDC DC = GetDC(0);
+    SetDeviceGammaRamp(DC, (LPVOID)pRamp);
+    ReleaseDC(0, DC);
+  } else {
+    Logger::Debug("EqGFX: Blocking SetGammaRamp: 0x%08x", Flags);
+  }
+
+  return D3D_OK;  // Likely a void function but returning just in case.
 }
 
 HRESULT WINAPI D3D8CreateDeviceHook(IDirect3D8* pD3D, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
@@ -261,10 +291,11 @@ void InstallDeviceLostRecoveryPatch(HMODULE handle) {
 }
 
 // Initializes state and installs the initial hooks into the dll.
-void InitializeEqGfx(HMODULE handle, void(__cdecl* init_fn)(),
+void InitializeEqGfx(HMODULE handle, bool enable_gamma_ramp, void(__cdecl* init_fn)(),
                      std::function<void(int width, int height)> set_client_size_callback) {
   // base = DWORD(handle);
   hwnd_ = nullptr;  // This must be set later with SetWindow() before more active use.
+  enable_device_gamma_ramp_ = enable_gamma_ramp;
   set_client_size_cb_ = set_client_size_callback;
 
   hook_Direct3DCreate8_ = IATHook(handle, "d3d8.dll", "Direct3DCreate8", D3D8Direct3DCreate8Hook);
@@ -287,10 +318,10 @@ void InitializeEqGfx(HMODULE handle, void(__cdecl* init_fn)(),
 }  // namespace
 }  // namespace EqGfxInt
 
-void EqGfx::Initialize(HMODULE handle, void(__cdecl* init_fn)(),
+void EqGfx::Initialize(HMODULE handle, bool enable_gamma_ramp, void(__cdecl* init_fn)(),
                        std::function<void(int width, int height)> set_client_size_callback) {
   Logger::Info("EqGfx::Initialize()");
-  EqGfxInt::InitializeEqGfx(handle, init_fn, set_client_size_callback);
+  EqGfxInt::InitializeEqGfx(handle, enable_gamma_ramp, init_fn, set_client_size_callback);
 }
 
 void EqGfx::SetWindow(HWND wnd) { EqGfxInt::hwnd_ = wnd; }
