@@ -18,9 +18,15 @@ class VTableHook {
     return (T)original_function_;
   }
 
+  // Puts the original function back into the vtable if it is still pointing at our hook.
+  void Restore();
+
   LPVOID new_function_ = nullptr;
   LPVOID original_function_ = nullptr;
 
  private:
+  void** object_vtable_ = nullptr;
+  size_t index_ = 0;
+
   LPVOID ReplaceVTableFunction(void** object_vtable, size_t index, LPVOID new_function, bool debug = false);
 };

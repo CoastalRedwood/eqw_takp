@@ -258,7 +258,8 @@ HRESULT WINAPI DDrawGetDisplayModeHook(IDirectDraw* lpDD, LPDDSURFACEDESC lpDDSu
 
 // Clean up any extra custom resources and null our references.
 ULONG WINAPI DDrawReleaseHook(IDirectDraw* lpDD) {
-  if (dd_ != lpDD)
+  const bool is_eqmain_dd = (dd_ == lpDD);
+  if (!is_eqmain_dd)
     Logger::Error("EqMain: Unexpected DDrawRelease: 0x%08x vs 0x%08x", (DWORD)dd_, (DWORD)lpDD);
   else
     Logger::Info("EqMain: DDrawRelease: 0x%08x", (DWORD)lpDD);
@@ -270,6 +271,21 @@ ULONG WINAPI DDrawReleaseHook(IDirectDraw* lpDD) {
   // tried releasing the primary surface and that crashed.
   if (secondary_surface_) secondary_surface_->Release();
   secondary_surface_ = nullptr;
+
+  // The vtables are shared across all objects in ddraw.dll, and that dll can stay loaded after
+  // eqmain.dll is freed (always under Wine). Put the original functions back so the hooks don't
+  // intercept later unrelated users (like eqmain's DirectX version check on exit). They get
+  // re-installed by the next DirectDrawCreate. The original Release pointer stays valid below.
+  // Note: The surface hooks only track the last installed vtable (primary and secondary share one).
+  if (is_eqmain_dd) {
+    hook_DDrawRelease_.Restore();
+    hook_CreateSurface_.Restore();
+    hook_GetDisplayMode_.Restore();
+    hook_SetDisplayMode_.Restore();
+    hook_SetCooperativeLevel_.Restore();
+    hook_Flip_.Restore();
+    hook_GetAttachedSurface_.Restore();
+  }
 
   int ref_count = hook_DDrawRelease_.original(DDrawReleaseHook)(lpDD);
   if (ref_count != 0) Logger::Error("EqMain: DDraw is leaking with ref count: %d", ref_count);
