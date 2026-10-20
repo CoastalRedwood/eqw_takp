@@ -223,6 +223,13 @@ HRESULT WINAPI DDrawCreateSurfaceHook(IDirectDraw* lpDD, LPDDSURFACEDESC lpDDSur
                                       LPDIRECTDRAWSURFACE* lplpDDSurface, IUnknown* pUnkOuter) {
   if (lpDDSurfaceDesc == nullptr || lplpDDSurface == nullptr) return E_POINTER;
 
+  // Only modify surfaces for the DirectDraw object created by eqmain (the vtable is shared). Other
+  // users, like eqmain's DirectX version check via GetProcAddress, get the unmodified behavior.
+  if (lpDD != dd_) {
+    Logger::Info("EqMain: Passing through CreateSurface for foreign DDraw: 0x%08x", (DWORD)lpDD);
+    return hook_CreateSurface_.original(DDrawCreateSurfaceHook)(lpDD, lpDDSurfaceDesc, lplpDDSurface, pUnkOuter);
+  }
+
   HRESULT result = E_FAIL;
 
   // The primary surface requires significant modifications to work in windowed mode properly.
