@@ -16,6 +16,8 @@ VTableHook::VTableHook(void** object_vtable, size_t index, LPVOID new_function, 
 void* VTableHook::ReplaceVTableFunction(void** object_vtable, size_t index, LPVOID new_function, bool debug) {
   if (!object_vtable) return nullptr;
 
+  object_vtable_ = object_vtable;
+  index_ = index;
   new_function_ = new_function;
   if (object_vtable[index] == new_function_) {
     if (debug) Logger::Info("Vtable already pointing at your function!");
@@ -42,4 +44,19 @@ void* VTableHook::ReplaceVTableFunction(void** object_vtable, size_t index, LPVO
   ::FlushInstructionCache(GetCurrentProcess(), (PVOID*)&object_vtable[index], sizeof(new_function_));
 
   return original_function_;
+}
+
+void VTableHook::Restore() {
+  if (!object_vtable_ || !original_function_) return;
+
+  // Leave it alone if something else has since replaced our hook. The vtable_hook_map entry is
+  // left in place since other tables may still be hooked with the same function.
+  if (object_vtable_[index_] == new_function_) {
+    DWORD old_protect;
+    ::VirtualProtect(&object_vtable_[index_], sizeof(void*), PAGE_EXECUTE_READWRITE, &old_protect);
+    object_vtable_[index_] = original_function_;
+    ::VirtualProtect(&object_vtable_[index_], sizeof(void*), old_protect, &old_protect);
+    ::FlushInstructionCache(GetCurrentProcess(), (PVOID*)&object_vtable_[index_], sizeof(original_function_));
+  }
+  object_vtable_ = nullptr;
 }
