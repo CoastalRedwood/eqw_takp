@@ -558,6 +558,32 @@ LONG WINAPI User32SetWindowLongAHook(HWND wnd, int index, long dwNewLong) {
   return ::GetWindowLongA(wnd, index);
 }
 
+// The eqmain.dll startup runs the old DirectX SDK GetDXVersion() check and shows the DX6_REQUIRED
+// message box if the result is < 0x600. The check is obsolete (eqgfx_dx8.dll requires DX8 anyway) and
+// it creates its own temporary DirectDraw object and primary surface, which has been failing when eqmain
+// is reloaded on exit (Wine, and Windows with dgvoodoo after quitting from char select). This replaces
+// the call with a MOV EAX, 0x800 (DX8) result of the same 5 byte length.
+void InstallDxVersionCheckPatch(HMODULE handle) {
+  const int base_addr = reinterpret_cast<int>(handle);
+  const int call_addr = base_addr + 0x0002503c;  // CALL GetDXVersion (rel32 to base + 0x5080).
+  static const BYTE call_bytes_unpatched[10] = {0xe8, 0x3f, 0x00, 0xfe, 0xff,   // CALL GetDXVersion.
+                                                0x3d, 0x00, 0x06, 0x00, 0x00};  // CMP EAX, 0x600.
+  static const BYTE call_bytes_patched[5] = {0xb8, 0x00, 0x08, 0x00, 0x00};     // MOV EAX, 0x800.
+  // Quick sanity check that the eqmain.dll is the one we expect.
+  if (memcmp(reinterpret_cast<void*>(call_addr), call_bytes_unpatched, sizeof(call_bytes_unpatched)) != 0) {
+    Logger::Error("EqMain: Unrecognized eqmain.dll, skipping DirectX version check patch");
+    return;
+  }
+
+  DWORD old_protect;
+  ::VirtualProtect(reinterpret_cast<LPVOID>(call_addr), sizeof(call_bytes_patched), PAGE_EXECUTE_READWRITE,
+                   &old_protect);
+  memcpy(reinterpret_cast<void*>(call_addr), call_bytes_patched, sizeof(call_bytes_patched));
+  ::VirtualProtect(reinterpret_cast<LPVOID>(call_addr), sizeof(call_bytes_patched), old_protect, &old_protect);
+  ::FlushInstructionCache(GetCurrentProcess(), reinterpret_cast<LPVOID>(call_addr), sizeof(call_bytes_patched));
+  Logger::Info("EqMain: Patched out DirectX version check");
+}
+
 // Initializes state and installs the hooks to bootstrap the rest.
 // Note that unlike eqgame, this will get called multiple times if dropping back to login screen.
 void InitializeEqMain(HMODULE handle, HWND hwnd, const std::filesystem::path& ini_path, void(__cdecl* init_fn)()) {
@@ -583,6 +609,8 @@ void InitializeEqMain(HMODULE handle, HWND hwnd, const std::filesystem::path& in
   hook_ShowCursor_ = IATHook(handle, "user32.dll", "ShowCursor", User32ShowCursorHook);
   hook_GetCursorPos_ = IATHook(handle, "user32.dll", "GetCursorPos", User32GetCursorPosHook);
   hook_ClientToScreen_ = IATHook(handle, "user32.dll", "ClientToScreen", User32ClientToScreenHook);
+
+  InstallDxVersionCheckPatch(handle);
 
   if (init_fn) {
     Logger::Info("EqMain: Executing external init callback");
